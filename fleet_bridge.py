@@ -198,10 +198,33 @@ def _host_rows(host: dict) -> list[dict]:
     return out
 
 
-def write_catalog(name: str, work_dir: str) -> Path:
-    """Write ``catalogs/{name}.cat`` from the staged BOOM host data. Always writes
-    a file (header-only when no host) so FLEET's reimport_catalog=False reads it
-    and never falls through to a network query."""
+def _no_host_sentinel(ra: float | None, dec: float | None) -> dict:
+    """A far, faint, float-valued catalogue row for the no-host case. FLEET loads
+    this file (reimport_catalog=False) and runs catalog_operations, which does an
+    in-place ``psfMag -= extinction``; on a header-only file astropy types those
+    columns int64 and numpy 2.x refuses the int-=float cast. One float row keeps the
+    columns float64, and being ~2 deg away and 99th-mag it is discarded by FLEET's
+    Pcc, so the object classifies hostless instead of crashing."""
+    rec = {
+        "ra_matched": (ra + 2.0) if ra is not None else 2.0,
+        "dec_matched": dec if dec is not None else 0.0,
+        "type_sdss": 3,
+        "object_nature": 1.0,
+    }
+    for b in _CAT_BANDS:
+        rec[f"psfMag_{b}_sdss"] = 99.0
+        rec[f"modelMag_{b}_sdss"] = 99.0
+        rec[f"petroR50_{b}_sdss"] = 0.7
+    return rec
+
+
+def write_catalog(
+    name: str, work_dir: str, ra: float | None = None, dec: float | None = None
+) -> Path:
+    """Write ``catalogs/{name}.cat`` from the staged BOOM host data. Always writes a
+    file so FLEET's reimport_catalog=False reads it and never falls through to a
+    network query; with no host it writes a single discarded sentinel row (see
+    ``_no_host_sentinel``) rather than a header-only file."""
     host = {}
     hp = Path(work_dir) / HOST_FILE
     if hp.exists():
@@ -209,7 +232,7 @@ def write_catalog(name: str, work_dir: str) -> Path:
             host = json.loads(hp.read_text())
         except Exception:  # noqa: BLE001 — no/invalid host -> hostless run
             host = {}
-    rows = _host_rows(host)
+    rows = _host_rows(host) or [_no_host_sentinel(ra, dec)]
     cols = ["ra_matched", "dec_matched", "type_sdss", "object_nature"]
     for b in _CAT_BANDS:
         cols += [f"psfMag_{b}_sdss", f"modelMag_{b}_sdss", f"petroR50_{b}_sdss"]
@@ -221,6 +244,15 @@ def write_catalog(name: str, work_dir: str) -> Path:
         for r in rows:
             f.write(" ".join(str(r[c]) for c in cols) + "\n")
     return path
+
+
+def _info_hostless(info_table) -> bool:
+    """FLEET's hostless verdict from its info table (True when it found no host
+    above the Pcc threshold). Defaults to True if the column is absent."""
+    try:
+        return bool(info_table["hostless"][0])
+    except Exception:  # noqa: BLE001 — missing column / unexpected shape
+        return True
 
 
 def _extract_probabilities(info_table) -> dict:
@@ -250,9 +282,9 @@ def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir:
     from fleet.classify import predict  # in the FLEET image
 
     name = resource_id or "obj"
-    write_lightcurve(payload, name, work_dir)
-    write_catalog(name, work_dir)  # always present -> no network query
     ra, dec = resolve_coords(payload)
+    write_lightcurve(payload, name, work_dir)
+    write_catalog(name, work_dir, ra, dec)  # always present -> no network query
     params = _params(payload)
 
     cwd = os.getcwd()
@@ -289,10 +321,12 @@ def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir:
         return {"status": "failure", "message": "FLEET produced no class probabilities"}
     predicted = max(probs, key=probs.get)
     prob = probs[predicted]
-    host_staged = (Path(work_dir) / HOST_FILE).exists()
+    # FLEET's own hostless verdict (it rejects a too-far/faint candidate via Pcc),
+    # not merely whether a host file was staged.
+    hostless = _info_hostless(info)
     msg = (
         f"FLEET: {predicted} (p={prob:.3f}), {len(lightcurve_rows(payload))} points, "
-        f"{'with host' if host_staged else 'hostless'}"
+        f"{'hostless' if hostless else 'with host'}"
     )
     result = {
         "status": "success",

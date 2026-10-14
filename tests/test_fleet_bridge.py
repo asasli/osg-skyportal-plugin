@@ -106,13 +106,32 @@ def test_write_catalog_from_lsdr10(tmp_path):
 def test_write_catalog_excludes_stars(tmp_path):
     (tmp_path / fleet_bridge.HOST_FILE).write_text(json.dumps(_host(objtype="PSF")))
     path = fleet_bridge.write_catalog("ZTF1", str(tmp_path))
-    # header only -> FLEET runs hostless, never queries the network.
-    assert len(path.read_text().splitlines()) == 1
+    # No usable host -> one float sentinel row (not header-only), so FLEET's
+    # catalog_operations (psfMag -= extinction) doesn't crash on an int64 column.
+    lines = path.read_text().splitlines()
+    assert len(lines) == 2
 
 
-def test_write_catalog_without_host_is_header_only(tmp_path):
-    path = fleet_bridge.write_catalog("ZTF1", str(tmp_path))
-    assert path.exists() and len(path.read_text().splitlines()) == 1
+def test_write_catalog_without_host_writes_float_sentinel(tmp_path):
+    # No host file at all: still a float sentinel row FLEET will discard via Pcc.
+    path = fleet_bridge.write_catalog("ZTF1", str(tmp_path), ra=10.0, dec=-5.0)
+    rows = list(
+        csv.DictReader(io.StringIO(path.read_text().replace(" ", ",")), skipinitialspace=True)
+    )
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["psfMag_g_sdss"] == "99.0" and r["modelMag_r_sdss"] == "99.0"  # float, faint
+    assert r["ra_matched"] == "12.0"  # offset +2 deg from the transient -> discarded
+
+
+def test_info_hostless_reads_fleet_flag():
+    class _T:
+        def __getitem__(self, k):
+            return {"hostless": [True]}[k]
+
+    assert fleet_bridge._info_hostless(_T()) is True
+    # missing column -> default True (treat as hostless rather than mislabel)
+    assert fleet_bridge._info_hostless(object()) is True
 
 
 def test_extract_probabilities_uses_p_late_and_rescales_percent():
