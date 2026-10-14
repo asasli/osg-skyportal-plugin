@@ -20,6 +20,7 @@ hostless, same as when no host is found.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 # Must match fleet_bridge.HOST_FILE (kept local to avoid importing the bridge,
@@ -30,7 +31,40 @@ HOST_FILE = "fleet_host.json"
 # NED = angular size / distance as a fallback).
 HOST_CATALOGS = ("LSDR10", "NED")
 
+# Retry the BOOM aux lookup on transient failures (5xx / timeout / connection) so a
+# blip doesn't silently degrade the job to hostless. _request already refreshes the
+# token once on 401; a 4xx here is a real error and is not retried.
+_STAGE_RETRIES = 3
+_STAGE_BACKOFF_S = 1.0
+
 _DB_INITED = False
+
+
+def _boom_find(broker, collection: str, obj_id: str):
+    """BOOM aux ``/queries/find`` for one object's cross_matches + host_galaxy,
+    retrying transient failures with backoff."""
+    import requests
+    from skyportal.broker_apis import boom as boom_api
+
+    body = {
+        "catalog_name": collection,
+        "filter": {"_id": {"$in": [obj_id]}},
+        "projection": {"cross_matches": 1, "host_galaxy": 1},
+    }
+    last: Exception | None = None
+    for attempt in range(_STAGE_RETRIES):
+        try:
+            return boom_api._request(broker, "POST", "queries/find", json=body)
+        except requests.HTTPError as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code is not None and code < 500:
+                raise  # a 4xx is a real error, not a transient blip
+            last = e
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last = e
+        if attempt + 1 < _STAGE_RETRIES:
+            time.sleep(_STAGE_BACKOFF_S * (2**attempt))
+    raise last if last is not None else RuntimeError("BOOM find exhausted retries")
 
 
 def _ensure_db() -> None:
@@ -70,7 +104,6 @@ def stage_host(cfg: dict, inputs: dict, job_dir: Path, log=print) -> list[Path]:
 
         _ensure_db()
         from baselayer.app.models import DBSession
-        from skyportal.broker_apis import boom as boom_api
         from skyportal.models import Broker
 
         with DBSession() as session:
@@ -84,16 +117,7 @@ def stage_host(cfg: dict, inputs: dict, job_dir: Path, log=print) -> list[Path]:
                 return []
 
             collection = f"{_survey_suffix(obj_id)}_alerts_aux"
-            res = boom_api._request(
-                broker,
-                "POST",
-                "queries/find",
-                json={
-                    "catalog_name": collection,
-                    "filter": {"_id": {"$in": [obj_id]}},
-                    "projection": {"cross_matches": 1, "host_galaxy": 1},
-                },
-            )
+            res = _boom_find(broker, collection, obj_id)
             docs = res.get("data") if isinstance(res, dict) else res
             if isinstance(docs, dict):
                 docs = docs.get("data", docs)
