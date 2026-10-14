@@ -222,15 +222,22 @@ def _row_to_catalog(row: dict) -> dict | None:
     mags = {b: _nanomaggy_to_ab(row.get(f"flux_{b}")) for b in ("g", "r", "i", "z")}
     if mags["g"] is None and mags["r"] is None:
         return None  # no usable host photometry
-    mags["u"] = mags["g"]  # LSDR10 has no u; stand in with g for the SDSS schema
+    # Fill every missing band (including u, which LSDR10 lacks) from the nearest
+    # present band. A missing band must not become a 99-mag sentinel: FLEET's Pcc
+    # filter is the i-band, so a host with no i flux would read as a chance
+    # coincidence (Pcc=1) and be dropped, even a bright nucleus at <1 arcsec.
+    order = ["u", "g", "r", "i", "z"]
+    present = {b: m for b, m in mags.items() if m is not None}
+    for b in order:
+        if mags.get(b) is None:
+            nearest = min(present, key=lambda p: abs(order.index(p) - order.index(b)))
+            mags[b] = present[nearest]
     shape_r = _to_float(row.get("shape_r"))
     rad = shape_r if shape_r and shape_r > 0 else 0.7  # FLEET's default_radius floor
     rec = {"ra_matched": ra, "dec_matched": dec, "type_sdss": 3, "object_nature": 1.0}
     for b in _CAT_BANDS:
-        val = mags.get(b)
-        val = val if val is not None else 99.0
-        rec[f"psfMag_{b}_sdss"] = val
-        rec[f"modelMag_{b}_sdss"] = val
+        rec[f"psfMag_{b}_sdss"] = mags[b]
+        rec[f"modelMag_{b}_sdss"] = mags[b]
         rec[f"petroR50_{b}_sdss"] = rad
     return rec
 

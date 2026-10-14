@@ -247,3 +247,21 @@ def test_select_host_none_when_only_dup_or_far():
         },
     ]
     assert fleet_bridge._select_host_row({"LSDR10": rows, "host_galaxy": {}}, rows) is None
+
+
+def test_row_to_catalog_fills_missing_band_not_sentinel():
+    # flux_i<=0 -> i-band missing. It must be filled from the nearest present band,
+    # not written as 99.0, or FLEET's i-band Pcc drops the host (chance coincidence).
+    row = {
+        "ra": 10.0,
+        "dec": 5.0,
+        "objtype": "SER",
+        "flux_g": 100.0,
+        "flux_r": 158.0,
+        "flux_i": 0.0,
+        "flux_z": 251.0,
+    }
+    rec = fleet_bridge._row_to_catalog(row)
+    assert rec["psfMag_i_sdss"] != 99.0
+    assert rec["psfMag_i_sdss"] in (rec["psfMag_r_sdss"], rec["psfMag_z_sdss"])
+    assert rec["psfMag_u_sdss"] == rec["psfMag_g_sdss"]  # u still stands in from g
