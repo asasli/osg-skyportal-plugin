@@ -170,3 +170,80 @@ def test_resolve_redshift_and_coords():
     p = _payload(analysis_parameters={"redshift": "0.15"})
     assert fleet_bridge.resolve_redshift(p) == 0.15
     assert fleet_bridge.resolve_coords(p) == (150.0, 2.5)
+
+
+def test_row_id_decodes_bson_int64():
+    # BOOM's raw-BSON int64 arrives as {high, low}; must stringify to match objname.
+    assert fleet_bridge._row_id({"_id": {"high": 2560088, "low": 217056842}}) == "10995494451938890"
+    assert fleet_bridge._row_id({"_id": {"$numberLong": "123"}}) == "123"
+    assert fleet_bridge._row_id({"_id": 42}) == "42"
+
+
+def test_select_host_uses_dlr_best_host_by_id():
+    rows = [
+        {
+            "_id": 111,
+            "ra": 10.0,
+            "dec": 5.0,
+            "objtype": "SER",
+            "flux_g": 100.0,
+            "distance_arcsec": 3.0,
+        },
+        {
+            "_id": 222,
+            "ra": 10.001,
+            "dec": 5.0,
+            "objtype": "SER",
+            "flux_g": 50.0,
+            "distance_arcsec": 0.5,
+        },
+    ]
+    host = {"LSDR10": rows, "host_galaxy": {"best_host": {"objname": "111", "catalog": "LSDR10"}}}
+    sel = fleet_bridge._select_host_row(host, rows)
+    assert sel["_id"] == 111  # the DLR-chosen id, not merely the nearest by distance
+
+
+def test_host_rows_recovers_psf_nucleus_when_best_host_null():
+    # TDE: BOOM dropped the PSF-typed nucleus so best_host is null; take the nearest.
+    rows = [
+        {
+            "_id": 1,
+            "ra": 10.0,
+            "dec": 5.0,
+            "objtype": "PSF",
+            "flux_g": 200.0,
+            "distance_arcsec": 0.3,
+        },
+        {
+            "_id": 2,
+            "ra": 10.01,
+            "dec": 5.0,
+            "objtype": "SER",
+            "flux_g": 80.0,
+            "distance_arcsec": 8.0,
+        },
+    ]
+    hr = fleet_bridge._host_rows({"LSDR10": rows, "host_galaxy": {"best_host": None}})
+    assert len(hr) == 1 and hr[0]["ra_matched"] == 10.0  # the PSF nucleus, kept
+
+
+def test_select_host_none_when_only_dup_or_far():
+    rows = [
+        {
+            "_id": 1,
+            "ra": 10.0,
+            "dec": 5.0,
+            "objtype": "DUP",
+            "flux_g": 200.0,
+            "distance_arcsec": 0.1,
+        },
+        {
+            "_id": 2,
+            "ra": 11.0,
+            "dec": 5.0,
+            "objtype": "SER",
+            "flux_g": 80.0,
+            "distance_arcsec": 50.0,
+        },
+    ]
+    assert fleet_bridge._select_host_row({"LSDR10": rows, "host_galaxy": {}}, rows) is None

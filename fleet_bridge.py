@@ -74,6 +74,9 @@ FLEET_ORIGIN = "FLEET"
 _STAR_TYPES = {"PSF", "DUP"}
 # SDSS-style bands FLEET parses; LSDR10 lacks u, so u is filled from g (see below).
 _CAT_BANDS = ("u", "g", "r", "i", "z")
+# Max LSDR10 offset (arcsec) to adopt as the host when BOOM's DLR best_host is null
+# (e.g. a PSF-typed nuclear TDE host it dropped) -- a nucleus sits well inside this.
+_HOST_MAX_SEP_ARCSEC = 2.0
 
 
 def _params(payload: dict) -> dict:
@@ -165,36 +168,91 @@ def _nanomaggy_to_ab(flux):
     return 22.5 - 2.5 * math.log10(f)
 
 
+def _row_id(row: dict) -> str:
+    """Stringified LSDR10 ``_id``, which host_galaxy.best_host.objname carries. The
+    raw BSON int64 can arrive as ``{high, low}`` or ``{$numberLong}``; decode those,
+    else str() the value."""
+    v = row.get("_id")
+    if isinstance(v, dict):
+        if "high" in v and "low" in v:
+            try:
+                return str(int(v["high"]) * 2**32 + (int(v["low"]) & 0xFFFFFFFF))
+            except (TypeError, ValueError):
+                return ""
+        if "$numberLong" in v:
+            return str(v["$numberLong"])
+    return str(v) if v is not None else ""
+
+
+def _select_host_row(host: dict, lsdr10: list) -> dict | None:
+    """The single LSDR10 row FLEET should use as the host, via BOOM's DLR work:
+    ``host_galaxy.best_host`` matched to its LSDR10 row by id, else — when best_host
+    is null, which happens for a TDE whose galaxy nucleus Legacy types PSF and BOOM's
+    star-like cut discards — the nearest non-DUP row by ``distance_arcsec``. Returns
+    None to leave the caller on the all-crossmatch/Pcc path."""
+    hg = host.get("host_galaxy") or {}
+    bh = hg.get("best_host") if isinstance(hg, dict) else None
+    if bh and str(bh.get("catalog") or "").upper() == "LSDR10":
+        name = str(bh.get("objname") or "")
+        for r in lsdr10:
+            if name and _row_id(r) == name:
+                return r
+    cands = []
+    for r in lsdr10:
+        if str(r.get("objtype") or "").strip().upper() == "DUP":
+            continue
+        d = _to_float(r.get("distance_arcsec"))
+        if d is not None:
+            cands.append((d, r))
+    if cands:
+        d, r = min(cands, key=lambda x: x[0])
+        if d <= _HOST_MAX_SEP_ARCSEC:
+            return r
+    return None
+
+
+def _row_to_catalog(row: dict) -> dict | None:
+    """One LSDR10 row -> a FLEET SDSS-style catalogue record (None if no usable
+    photometry). object_nature=1.0 / type_sdss=3 declare it a galaxy, overriding a
+    PSF mistyping of a nuclear host."""
+    ra = _to_float(row.get("ra"))
+    dec = _to_float(row.get("dec"))
+    if ra is None or dec is None:
+        return None
+    mags = {b: _nanomaggy_to_ab(row.get(f"flux_{b}")) for b in ("g", "r", "i", "z")}
+    if mags["g"] is None and mags["r"] is None:
+        return None  # no usable host photometry
+    mags["u"] = mags["g"]  # LSDR10 has no u; stand in with g for the SDSS schema
+    shape_r = _to_float(row.get("shape_r"))
+    rad = shape_r if shape_r and shape_r > 0 else 0.7  # FLEET's default_radius floor
+    rec = {"ra_matched": ra, "dec_matched": dec, "type_sdss": 3, "object_nature": 1.0}
+    for b in _CAT_BANDS:
+        val = mags.get(b)
+        val = val if val is not None else 99.0
+        rec[f"psfMag_{b}_sdss"] = val
+        rec[f"modelMag_{b}_sdss"] = val
+        rec[f"petroR50_{b}_sdss"] = rad
+    return rec
+
+
 def _host_rows(host: dict) -> list[dict]:
-    """Galaxy candidates from the staged BOOM data, each as a FLEET SDSS-style
-    catalogue row. Prefers the LSDR10 crossmatch rows (they carry the fluxes +
-    half-light radius); the host_galaxy association only tells us which is best,
-    not photometry, so we classify all non-stellar LSDR10 rows and let FLEET's
-    own get_best_host pick via Pcc."""
+    """FLEET SDSS-style catalogue rows from the staged BOOM data. Uses BOOM's DLR
+    host when it resolves to an LSDR10 row (see ``_select_host_row``) and hands FLEET
+    just that one, so it classifies with the DLR host instead of re-picking via Pcc
+    (which drops nuclear TDE hosts). Otherwise falls back to every non-stellar
+    crossmatch and lets FLEET choose."""
     lsdr10 = host.get("LSDR10") or host.get("cross_matches", {}).get("LSDR10") or []
+    selected = _select_host_row(host, lsdr10)
+    if selected is not None:
+        rec = _row_to_catalog(selected)
+        return [rec] if rec is not None else []
     out = []
     for row in lsdr10:
-        objtype = str(row.get("objtype") or "").strip().upper()
-        if objtype in _STAR_TYPES:
+        if str(row.get("objtype") or "").strip().upper() in _STAR_TYPES:
             continue
-        ra = _to_float(row.get("ra"))
-        dec = _to_float(row.get("dec"))
-        shape_r = _to_float(row.get("shape_r"))
-        if ra is None or dec is None:
-            continue
-        mags = {b: _nanomaggy_to_ab(row.get(f"flux_{b}")) for b in ("g", "r", "i", "z")}
-        if mags["g"] is None and mags["r"] is None:
-            continue  # no usable host photometry
-        mags["u"] = mags["g"]  # LSDR10 has no u; stand in with g for the SDSS schema
-        rad = shape_r if shape_r and shape_r > 0 else 0.7  # FLEET's default_radius floor
-        rec = {"ra_matched": ra, "dec_matched": dec, "type_sdss": 3, "object_nature": 1.0}
-        for b in _CAT_BANDS:
-            m = mags.get(b)
-            val = m if m is not None else 99.0
-            rec[f"psfMag_{b}_sdss"] = val  # object_nature supplied, so PSF is nominal
-            rec[f"modelMag_{b}_sdss"] = val
-            rec[f"petroR50_{b}_sdss"] = rad
-        out.append(rec)
+        rec = _row_to_catalog(row)
+        if rec is not None:
+            out.append(rec)
     return out
 
 
