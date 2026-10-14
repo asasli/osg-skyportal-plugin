@@ -270,10 +270,10 @@ WRAPPER_DEFAULT_IMAGE = {
     "flare": "osdf:///ospool/ap41/data/michael.coughlin/flare-v3.sif",
     # ORACLE runtime: the maintainer's image ships the oracle package + weights.
     "oracle": "/cvmfs/singularity.opensciencegrid.org/dev-ved30/oracle:main",
-    # FLEET runtime (fleet docker branch): bakes the RF pickles + SFD maps. Set to
-    # the CVMFS mirror of ghcr.io/<owner>/fleet once it's synced; docker:// works
-    # meanwhile.
-    "fleet": "docker://ghcr.io/gmzsebastian/fleet:latest",
+    # FLEET runtime: bakes the RF pickles + SFD maps. CVMFS mirror (token-free, no
+    # per-node docker convert) of ghcr.io/gmzsebastian/fleet, synced via
+    # cvmfs-singularity-sync; docker://ghcr.io/gmzsebastian/fleet:latest is the fallback.
+    "fleet": "/cvmfs/singularity.opensciencegrid.org/gmzsebastian/fleet:latest",
 }
 
 # The GW searches pull whole .gwf frame files (O4 hoft frames are ~1.5 GB each,
