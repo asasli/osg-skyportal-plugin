@@ -757,7 +757,9 @@ def submit_jobs_batch(cfg: dict, items: list[dict]) -> list[tuple[int, int]]:
         "transfer_executable": "False",
         "should_transfer_files": "YES",
         "when_to_transfer_output": "ON_EXIT",
-        "transfer_input_files": f"{transfer_files},$(inputs_json)",
+        # $(extra_files) ships per-proc staged inputs (oracle cutout, fleet host,
+        # flare context); it is "" for items/wrappers that stage nothing.
+        "transfer_input_files": f"{transfer_files},$(inputs_json)$(extra_files)",
         "output": "job.$(ClusterId).$(ProcId).out",
         "error": "job.$(ClusterId).$(ProcId).err",
         "request_cpus": str(p0.get("request_cpus", defaults["request_cpus"])),
@@ -785,10 +787,6 @@ def submit_jobs_batch(cfg: dict, items: list[dict]) -> list[tuple[int, int]]:
     if not p0.get("singularity_image") and wrapper in WRAPPER_DEFAULT_IMAGE:
         submit_desc["+SingularityImage"] = f'"{WRAPPER_DEFAULT_IMAGE[wrapper]}"'
     _apply_igwn_ap(submit_desc, p0, defaults)
-    # oracle stages a per-object reference cutout (below) and ships it per proc via
-    # the $(extra_files) macro (empty for items whose cutout couldn't be fetched).
-    if wrapper == "oracle":
-        submit_desc["transfer_input_files"] = f"{transfer_files},$(inputs_json)$(extra_files)"
     env_parts = []
     env_parts.append(f"OSG_NUM_CPUS={p0.get('request_cpus', defaults['request_cpus'])}")
     if out_prefix:

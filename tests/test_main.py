@@ -1011,3 +1011,27 @@ def test_post_callback_does_not_retry_4xx(monkeypatch):
     monkeypatch.setattr(main.requests, "post", fake_post)
     assert main.post_callback(_rec()) is True
     assert len(calls) == 1
+
+
+def test_batch_transfer_ships_extra_files_for_fleet(
+    plugin_cfg, last_submit_desc, last_itemdata, tmp_path, monkeypatch
+):
+    """fleet (like oracle/flare) stages a per-proc file; the batch transfer list must
+    carry $(extra_files) so the staged host reaches the job -- not only for oracle."""
+    import fleet_staging
+
+    staged = [tmp_path / "fleet_host.json"]
+    staged[0].write_text("{}")
+    monkeypatch.setattr(fleet_staging, "stage_host", lambda *a, **k: staged)
+    main.submit_jobs_batch(
+        plugin_cfg,
+        [
+            {
+                "analysis_name": "fleet_osg",
+                "resource_id": "OBJ",
+                "inputs": {"analysis_parameters": {"wrapper": "fleet"}},
+            }
+        ],
+    )
+    assert "$(extra_files)" in last_submit_desc["transfer_input_files"]
+    assert last_itemdata[0]["extra_files"] == "," + str(staged[0])
