@@ -24,6 +24,29 @@ except ImportError:
     requests = None
 
 
+def _configure_dustmaps() -> None:
+    """Point dustmaps at the SFD maps baked into the FLEET image.
+
+    This dustmaps build ignores DUSTMAPS_DATA_DIR and reads its data directory from a
+    JSON config named by DUSTMAPS_CONFIG_FNAME (default ~/.dustmapsrc). OSPool runs the
+    container with a cleaned env and a non-root HOME, so nothing points dustmaps at the
+    maps (``/opt/dustmaps/sfd``) and it falls back to its empty package dir. Write a
+    config and point it there, before fleet imports dustmaps."""
+    if os.environ.get("DUSTMAPS_CONFIG_FNAME"):
+        return
+    rc = Path.cwd() / ".dustmapsrc.json"
+    try:
+        rc.write_text(
+            json.dumps({"data_dir": os.environ.get("DUSTMAPS_DATA_DIR", "/opt/dustmaps")})
+        )
+        os.environ["DUSTMAPS_CONFIG_FNAME"] = str(rc)
+    except OSError:
+        pass
+
+
+_configure_dustmaps()
+
+
 def load_inputs(path: Path = Path("inputs.json")) -> dict:
     return json.loads(path.read_text())
 
