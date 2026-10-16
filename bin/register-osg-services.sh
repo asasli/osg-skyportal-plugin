@@ -55,6 +55,16 @@ python register_analysis_service.py \
   --input-data-types spectra redshift \
   --optional-params-json '{"wrapper": ["snid"], "singularity_image": ["docker://ghcr.io/fiorenst/snid-sage", "/cvmfs/singularity.opensciencegrid.org/fiorenst/snid-sage:latest"], "spectrum_index": {"type": "number"}, "free_redshift": ["False", "True"], "clip_host_lines": ["True", "False"], "n_results": {"type": "number", "default": 5}, "request_cpus": {"type": "number", "default": 1}, "request_memory": {"type": "number", "default": 2048}}'
 
+# jax-snana — SALT/BayeSN light-curve fitting (SALT3.DOVEKIE/K21, BAYESN.G26/W22).
+# Its image (containers/jax-snana.def -> OSDF .sif) ships the models and built-in
+# filter calibration, so no KCOR file is needed. A SALT fit is a least-squares,
+# so it runs on one CPU core in seconds, <1 GB. Needs a positive redshift.
+python register_analysis_service.py \
+  --name JAX_SNANA_OSG --display "jax-snana (OSG)" \
+  --listener-url http://localhost:7100/analysis/jax_snana_osg \
+  --input-data-types photometry redshift \
+  --optional-params-json '{"source": ["SALT3.DOVEKIE", "SALT3.K21", "BAYESN.G26", "BAYESN.W22"], "wrapper": ["jax_snana"], "singularity_image": ["osdf:///ospool/ap41/data/michael.coughlin/jax-snana-v1.sif"], "mwebv": {"type": "number"}, "n_fit_iterations": {"type": "number", "default": 3}, "request_cpus": {"type": "number", "default": 1}, "request_memory": {"type": "number", "default": 2048}}'
+
 # Already registered (kept here for reference / re-registration):
 #   Fiesta_OSG      -> backend fiesta, /analysis/fiesta_osg
 #   PeriodFind_OSG  -> wrapper periodfind, /analysis/periodfind

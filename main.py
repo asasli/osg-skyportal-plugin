@@ -365,6 +365,7 @@ def _stage_wrapper_job(
         "flare",
         "oracle",
         "fleet",
+        "jax_snana",
     ) or params.get("use_wrapper", cfg.get("defaults", {}).get("use_wrapper", False))
     if not use_wrapper:
         return {}, None, []
