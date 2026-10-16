@@ -121,7 +121,9 @@ def check_caps(cfg: dict, analysis_name: str, resource_id: str | None) -> str | 
     """Return None if the request fits within configured caps, else a reason string."""
     caps = cfg.get("caps") or {}
     # list() snapshots atomically vs concurrent submit-thread adds to JOBS.
-    open_jobs = [r for r in list(JOBS.values()) if r.completed_at is None]
+    open_jobs = [
+        r for r in list(JOBS.values()) if r.completed_at is None and r.status not in TERMINAL
+    ]
     total_cap = caps.get("max_concurrent_total")
     if total_cap and len(open_jobs) >= total_cap:
         return f"global cap: already {len(open_jobs)} of {total_cap} concurrent jobs"
