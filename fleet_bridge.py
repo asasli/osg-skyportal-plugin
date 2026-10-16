@@ -139,6 +139,30 @@ def lightcurve_rows(payload: dict) -> list[dict]:
     return sorted(rows, key=lambda x: x["MJD"])
 
 
+# FLEET's predict() fits only the detections within 75 days of the first one.
+FLEET_PHASE_MAX_DAYS = 75
+FLEET_MIN_DETECTIONS = 5
+FLEET_MIN_DEC = -32
+
+
+def unclassifiable_reason(payload: dict) -> str | None:
+    """Why FLEET would return no class probabilities for this payload, or None."""
+    _, dec = resolve_coords(payload)
+    if dec is not None and dec <= FLEET_MIN_DEC:
+        return f"FLEET does not classify sources at dec <= {FLEET_MIN_DEC}"
+    dets = [r for r in lightcurve_rows(payload) if r["UL"] == "False"]
+    early = [r for r in dets if r["MJD"] - dets[0]["MJD"] < FLEET_PHASE_MAX_DAYS]
+    n_g = sum(r["Filter"] == "g" for r in early)
+    n_r = sum(r["Filter"] == "r" for r in early)
+    if n_g and n_r and len(early) >= FLEET_MIN_DETECTIONS:
+        return None
+    return (
+        f"FLEET needs g and r detections and {FLEET_MIN_DETECTIONS} in all within "
+        f"{FLEET_PHASE_MAX_DAYS} days of the first detection; this light curve has "
+        f"{n_g} g, {n_r} r, {len(early)} in all"
+    )
+
+
 def write_lightcurve(payload: dict, name: str, work_dir: str) -> Path:
     """Write ``photometry/{name}.txt`` in FLEET's local-light-curve schema. FLEET
     applies Galactic extinction itself (baked SFD), so magnitudes stay raw."""

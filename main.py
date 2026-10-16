@@ -1536,6 +1536,15 @@ class AnalysisHandler(tornado.web.RequestHandler):
             "callback_method": data["callback_method"],
             "inputs": data["inputs"],
         }
+        if _wrapper_of(item) == "fleet":
+            import fleet_bridge
+
+            reason = fleet_bridge.unclassifiable_reason(data["inputs"])
+            if reason:
+                self.set_status(422)
+                self.write({"error": "insufficient_data", "reason": reason})
+                return
+
         cap_reason = check_caps(self.cfg, analysis_name, data.get("resource_id"))
         if cap_reason or _WAITING:
             max_waiting = (self.cfg.get("caps") or {}).get("max_waiting", 5000)
