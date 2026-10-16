@@ -1412,6 +1412,8 @@ class AnalysisHandler(tornado.web.RequestHandler):
                     params.setdefault("wrapper", "oracle")
                 elif "fleet" in name:
                     params.setdefault("wrapper", "fleet")
+                elif "jax_snana" in name:
+                    params.setdefault("wrapper", "jax_snana")
                 elif "alma" in name:
                     params.setdefault("wrapper", "alma")
                 elif "redback" in name:
