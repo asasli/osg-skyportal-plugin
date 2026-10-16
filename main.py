@@ -274,10 +274,11 @@ WRAPPER_DEFAULT_IMAGE = {
     # per-node docker convert) of ghcr.io/gmzsebastian/fleet, synced via
     # cvmfs-singularity-sync; docker://ghcr.io/gmzsebastian/fleet:latest is the fallback.
     "fleet": "/cvmfs/singularity.opensciencegrid.org/gmzsebastian/fleet:latest",
-    # jax-snana SALT/BayeSN light-curve fitter (containers/jax-snana.def = pip
-    # install jax-snana; bundled models + built-in filters, so no kcor). Set to the
-    # CVMFS mirror once built+synced; a per-request singularity_image overrides.
-    "jax_snana": "docker://ghcr.io/mattgrayling/jax-snana:latest",
+    # jax-snana SALT/BayeSN light-curve fitter. Build containers/jax-snana.def
+    # (pip install jax-snana; bundled models + built-in filters, so no kcor),
+    # stage the versioned .sif to OSDF, and bump the version on rebuild (OSDF
+    # caches by object name). A per-request singularity_image overrides.
+    "jax_snana": "osdf:///ospool/ap41/data/michael.coughlin/jax-snana-v1.sif",
 }
 
 # The GW searches pull whole .gwf frame files (O4 hoft frames are ~1.5 GB each,

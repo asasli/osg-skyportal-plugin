@@ -1,0 +1,33 @@
+# jax-snana runtime image for the OSG plugin (SALT / BayeSN light-curve fitting).
+# Just jax-snana + its deps (jax, numpyro); the SALT/BayeSN models and the
+# built-in filter calibration ship inside the pip package, so nothing is
+# downloaded at build or run time and no KCOR file is needed. The plugin ships
+# jax_snana_wrapper.py + jax_snana_bridge.py per-job, so this is a generic
+# jax-snana runtime with no plugin code baked in.
+#
+#   apptainer build --fakeroot --mksquashfs-args "-processors 1" jax-snana.sif jax-snana.def
+#
+# A SALT fit is a least-squares, so CPU is fine; no GPU variant is needed.
+# Ubuntu 24.04 ships Python 3.12, which jax-snana (>=3.12) requires.
+Bootstrap: docker
+From: ubuntu:24.04
+
+%post
+    set -e
+    export PIP_BREAK_SYSTEM_PACKAGES=1 DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y python3 python3-pip git build-essential
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+    pip3 install uv
+    uv pip install --system --break-system-packages jax-snana
+
+    # Fail the build if the runtime isn't importable, and warm the model/filter
+    # data path so a read-only .sif on a worker never has to resolve it.
+    python3 -c "from jax_snlc_fit import LightCurveFitter; \
+        f = LightCurveFitter('SALT3.DOVEKIE', batch_size=1); \
+        assert 'p48r' in f.calibration.get_filter_names(); \
+        print('jax-snana runtime OK (built-in ZTF filters present)')"
+
+%runscript
+    exec python3 "$@"
