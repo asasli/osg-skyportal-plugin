@@ -296,6 +296,8 @@ WRAPPER_DEFAULT_IMAGE = {
 WRAPPER_DEFAULT_RESOURCES = {
     "pygrb": {"request_disk": 16384, "request_memory": 8192, "max_runtime_seconds": 7200},
     "aframe": {"request_disk": 16384, "request_memory": 8192, "max_runtime_seconds": 7200},
+    # Uses ~1.5 GB of scratch; slots that enforce the 1 GB default hold the job.
+    "fleet": {"request_disk": 3072},
 }
 
 # wrapper -> (entrypoint, extra bridge/helper basenames). The single runtime
@@ -727,7 +729,11 @@ def _submit_signature(cfg: dict, params: dict) -> tuple:
     physics/GPU overrides are folded in so a physics and a phenomenological fit
     never share a cluster (they get different memory/GPU)."""
     wrapper = str(params.get("wrapper", "")).strip().lower()
-    d = {**cfg["defaults"], **_fiesta_overrides(wrapper, params, cfg["defaults"])}
+    d = {
+        **cfg["defaults"],
+        **_fiesta_overrides(wrapper, params, cfg["defaults"]),
+        **WRAPPER_DEFAULT_RESOURCES.get(wrapper, {}),
+    }
     return (
         str(params.get("request_cpus", d["request_cpus"])),
         str(params.get("request_memory", d["request_memory"])),
@@ -760,7 +766,11 @@ def submit_jobs_batch(cfg: dict, items: list[dict]) -> list[tuple[int, int]]:
     # which includes the image + wrapper, so one cluster is a single runtime).
     p0 = (items[0].get("inputs") or {}).get("analysis_parameters", {}) or {}
     wrapper = str(p0.get("wrapper", "")).strip().lower()
-    defaults = {**defaults, **_fiesta_overrides(wrapper, p0, defaults)}
+    defaults = {
+        **defaults,
+        **_fiesta_overrides(wrapper, p0, defaults),
+        **WRAPPER_DEFAULT_RESOURCES.get(wrapper, {}),
+    }
     wrapper_name, wrapper_files = _wrapper_spec(wrapper, plugin_dir)
     transfer_files = ",".join(str(f) for f in wrapper_files)
     submit_desc: dict[str, str] = {
