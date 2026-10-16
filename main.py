@@ -1005,7 +1005,7 @@ _SP_AD_PROJECTION = [
 ]
 
 
-def _adopt_ad(ad: dict, from_history: bool = False) -> None:
+def _adopt_ad(ad: dict, from_history: bool = False, spooled: bool = False) -> None:
     """Reconstruct a JobRecord from one schedd/history ClassAd, if we don't already have it."""
     cid = int(ad["ClusterId"])
     pid = int(ad.get("ProcId", 0))
@@ -1021,6 +1021,10 @@ def _adopt_ad(ad: dict, from_history: bool = False) -> None:
         submitted_at=float(ad.get("QDate", time.time())),
         osdf_output_url=ad.get("SkyPortalOsdfOutput") or None,
         osdf_staged=(ad.get("SkyPortalOsdfStaged") or "").split(),
+        # Spool is deployment-wide, not recorded on the ad; without it a job that
+        # finishes after a restart never has its output sandbox pulled back, so
+        # its callback posts empty. Carry the config's setting through.
+        spooled=spooled,
     )
     if from_history:
         rec.status = CONDOR_STATUS.get(int(ad["JobStatus"]), "completed")
@@ -1086,11 +1090,12 @@ def rehydrate_jobs(cfg: dict, history_hours: float = 24.0) -> int:
     """Repopulate `JOBS` from the schedd on startup. Returns count adopted."""
     schedd = get_schedd(cfg)
     project = cfg["htcondor"]["project_name"]
+    spooled = bool(cfg["htcondor"].get("spool", True))
     constraint = f'ProjectName == "{project}" && SkyPortalCallback isnt ""'
     before = len(JOBS)
     for ad in schedd.query(constraint=constraint, projection=_SP_AD_PROJECTION):
         if _is_own_job(ad, cfg):
-            _adopt_ad(ad)
+            _adopt_ad(ad, spooled=spooled)
     cutoff = time.time() - history_hours * 3600
     history_constraint = f"{constraint} && CompletionDate > {cutoff:.0f}"
     try:
@@ -1100,7 +1105,7 @@ def rehydrate_jobs(cfg: dict, history_hours: float = 24.0) -> int:
             match=1000,
         ):
             if _is_own_job(ad, cfg):
-                _adopt_ad(ad, from_history=True)
+                _adopt_ad(ad, from_history=True, spooled=spooled)
     except Exception as e:  # noqa: BLE001 — history is best-effort
         log(f"rehydrate: history sweep failed: {e!r}")
     adopted = len(JOBS) - before
