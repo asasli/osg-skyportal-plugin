@@ -394,10 +394,10 @@ def test_check_caps_ignores_completed_jobs(plugin_cfg):
 class TestCapHttp(_AppTestCase):
     def get_app(self):
         cfg = dict(_CONFIG_FOR_HTTP)
-        cfg["caps"] = {"max_concurrent_per_resource_per_analysis": 1}
+        cfg["caps"] = {"max_concurrent_per_resource_per_analysis": 1, "max_waiting": 1}
         return main.build_app(cfg)
 
-    def test_429_on_per_resource_cap(self):
+    def test_waits_then_429_on_per_resource_cap(self):
         body = json.dumps(
             {
                 "inputs": {},
@@ -410,8 +410,11 @@ class TestCapHttp(_AppTestCase):
         r1 = self.fetch("/analysis/fiesta_osg", method="POST", body=body, headers=headers)
         assert r1.code == 200
         r2 = self.fetch("/analysis/fiesta_osg", method="POST", body=body, headers=headers)
-        assert r2.code == 429
-        assert r2.headers.get("Retry-After") == "60"
+        assert r2.code == 200
+        assert "per-resource cap" in json.loads(r2.body)["waiting"]
+        r3 = self.fetch("/analysis/fiesta_osg", method="POST", body=body, headers=headers)
+        assert r3.code == 429
+        assert r3.headers.get("Retry-After") == "60"
 
 
 # ---- NMMA wrapper bridging -----------------------------------------------------------------

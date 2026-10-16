@@ -105,11 +105,12 @@ services:
                     max_size: 50
                     window_seconds: 30
                 caps:
-                    # Reject submissions above these caps with HTTP 429.
+                    # Submissions above these caps wait; past max_waiting, HTTP 429.
                     # null = no limit. Defaults are conservative; raise for production.
                     max_concurrent_total: 50
                     max_concurrent_per_analysis: 20
                     max_concurrent_per_resource_per_analysis: 1
+                    max_waiting: 5000
                 osdf:
                     # Pelican origin prefix for per-job result bundles. The plugin
                     # generates <output_prefix>/<uuid>.json on submit and the

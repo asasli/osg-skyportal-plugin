@@ -202,10 +202,14 @@ def _isolate_jobs() -> Iterator[None]:
     import main
 
     main.JOBS.clear()
+    main._WAITING.clear()
+    main._SUBMITTING.clear()
     _FAKE_QUEUE.clear()
     _FAKE_HISTORY.clear()
     yield
     main.JOBS.clear()
+    main._WAITING.clear()
+    main._SUBMITTING.clear()
     _FAKE_QUEUE.clear()
     _FAKE_HISTORY.clear()
 
