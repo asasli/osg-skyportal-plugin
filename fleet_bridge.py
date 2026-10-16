@@ -61,7 +61,7 @@ FLEET_TO_TAXONOMY = {
     "SNIIb": "IIb",
     "SNIbc": "Ib/c",
     "SLSNI": "Ic-SLSN",
-    "SLSNII": "IIn-SLSN",
+    "SLSNII": "II-SLSN",
     "AGN": "AGN",
     "TDE": "Tidal Disruption Event",
     "Star": "Stellar variable",
