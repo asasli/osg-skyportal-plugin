@@ -96,6 +96,8 @@ services:
                     interval_seconds: 60
                     # A job held longer than this is removed and reported as failed.
                     held_timeout_seconds: 900
+                    # How long a callback SkyPortal failed to accept (5xx) keeps being retried.
+                    callback_retry_seconds: 1800
                 batch:
                     # Coalesce incoming submits into one itemdata RPC (one cluster,
                     # many procs) to lift the AP submit-rate ceiling ~10x. The

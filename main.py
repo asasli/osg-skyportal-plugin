@@ -90,6 +90,7 @@ class JobRecord:
     hold_reason: str | None = None
     held_since: float | None = None
     callback_posted: bool = False
+    callback_failed_at: float | None = None
     osdf_output_url: str | None = None
     # Products staged to OSDF for this job's inputs, removed once it is over.
     osdf_staged: list[str] = field(default_factory=list)
@@ -1352,7 +1353,9 @@ def _json_safe(obj: Any) -> Any:
     return obj
 
 
-def post_callback(rec: JobRecord, cfg: dict | None = None) -> bool:
+def post_callback(
+    rec: JobRecord, cfg: dict | None = None, attempts: int = _CALLBACK_ATTEMPTS
+) -> bool:
     """POST the SkyPortal-shaped result to rec.callback_url. Return True on send.
 
     Retries briefly on a connection error or 5xx: a deploy rolls the SkyPortal web
@@ -1363,7 +1366,7 @@ def post_callback(rec: JobRecord, cfg: dict | None = None) -> bool:
     if not rec.callback_url or rec.callback_method.upper() != "POST":
         return False
     body = _json_safe(build_callback_body(rec, cfg))
-    for attempt in range(_CALLBACK_ATTEMPTS):
+    for attempt in range(attempts):
         try:
             r = requests.post(rec.callback_url, json=body, timeout=30)
             if r.status_code < 500:  # 2xx/3xx/4xx are definitive; only 5xx is transient
@@ -1371,10 +1374,27 @@ def post_callback(rec: JobRecord, cfg: dict | None = None) -> bool:
             err = f"HTTP {r.status_code}"
         except requests.RequestException as e:
             err = repr(e)
-        if attempt + 1 < _CALLBACK_ATTEMPTS:
+        if attempt + 1 < attempts:
             time.sleep(_CALLBACK_BACKOFF_S * (2**attempt))
-    log(f"callback post to {rec.callback_url} failed after {_CALLBACK_ATTEMPTS} tries: {err}")
+    log(f"callback post to {rec.callback_url} failed after {attempts} tries: {err}")
     return False
+
+
+def _retry_callbacks(cfg: dict) -> None:
+    """Resend callbacks that failed while SkyPortal was down, for up to
+    callback_retry_seconds: one try each, stopping at the first failure."""
+    window = float(cfg["poller"].get("callback_retry_seconds", 1800))
+    for rec in list(JOBS.values()):
+        if rec.callback_posted or rec.callback_failed_at is None or rec.completed_at is None:
+            continue
+        if not rec.callback_url or rec.callback_method.upper() != "POST":
+            continue
+        if time.time() - rec.callback_failed_at > window:
+            continue
+        rec.callback_posted = post_callback(rec, cfg, attempts=1)
+        if not rec.callback_posted:
+            return
+        _remove_job_outputs(rec)
 
 
 def poll_once(cfg: dict) -> None:
@@ -1383,6 +1403,7 @@ def poll_once(cfg: dict) -> None:
     IGWN AP is invisible on the default schedd (and would look 'removed')."""
     if not JOBS:
         return
+    _retry_callbacks(cfg)
     # list() snapshots atomically (one C call) so a concurrent submit adding to
     # JOBS from _SUBMIT_POOL can't raise "dict changed size during iteration".
     open_keys = [k for k, r in list(JOBS.items()) if r.completed_at is None]
@@ -1483,6 +1504,8 @@ def _poll_group(cfg: dict, schedd, open_keys: list) -> None:
             rec.callback_posted = post_callback(rec, cfg)
             if rec.callback_posted:
                 _remove_job_outputs(rec)
+            elif rec.callback_failed_at is None:
+                rec.callback_failed_at = time.time()
         # Independent of the callback: the results are the user's, the staged
         # gigabytes are ours, and neither should wait on the other.
         if rec.status in TERMINAL and rec.osdf_staged:
