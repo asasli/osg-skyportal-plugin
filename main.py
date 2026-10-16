@@ -88,6 +88,7 @@ class JobRecord:
     last_polled_at: float | None = None
     completed_at: float | None = None
     hold_reason: str | None = None
+    held_since: float | None = None
     callback_posted: bool = False
     osdf_output_url: str | None = None
     # Products staged to OSDF for this job's inputs, removed once it is over.
@@ -1402,6 +1403,22 @@ def poll_once(cfg: dict) -> None:
         _poll_group(cfg, schedd, keys)
 
 
+def _remove_held(schedd, rec: JobRecord) -> None:
+    """A held job never resumes by itself: remove it so it is reported as failed."""
+    reason = f"OSG job held: {rec.hold_reason or 'no reason given'}"
+    try:
+        schedd.act(
+            _htcondor().JobAction.Remove,
+            f"ClusterId == {rec.cluster_id} && ProcId == {rec.proc_id}",
+            reason=reason,
+        )
+    except Exception as e:  # noqa: BLE001 — still report the job as failed
+        log(f"could not remove held job {rec.cluster_id}.{rec.proc_id}: {e!r}")
+    rec.hold_reason = reason
+    rec.status = "removed"
+    rec.completed_at = time.time()
+
+
 def _poll_group(cfg: dict, schedd, open_keys: list) -> None:
     # Query distinct clusters (a batched submit shares one ClusterId across many
     # procs), then match each ad back to its (cluster, proc) record.
@@ -1410,8 +1427,16 @@ def _poll_group(cfg: dict, schedd, open_keys: list) -> None:
 
     live_ads = schedd.query(
         constraint=constraint,
-        projection=["ClusterId", "ProcId", "JobStatus", "HoldReason", "HoldReasonCode"],
+        projection=[
+            "ClusterId",
+            "ProcId",
+            "JobStatus",
+            "HoldReason",
+            "HoldReasonCode",
+            "EnteredCurrentStatus",
+        ],
     )
+    held_timeout = float(cfg["poller"].get("held_timeout_seconds", 900))
     seen_live = set()
     for ad in live_ads:
         k = (int(ad["ClusterId"]), int(ad.get("ProcId", 0)))
@@ -1422,6 +1447,12 @@ def _poll_group(cfg: dict, schedd, open_keys: list) -> None:
         rec.status = CONDOR_STATUS.get(int(ad["JobStatus"]), "unknown")
         rec.last_polled_at = time.time()
         rec.hold_reason = ad.get("HoldReason")
+        if rec.status != "held":
+            rec.held_since = None
+        elif rec.held_since is None:
+            rec.held_since = float(ad.get("EnteredCurrentStatus") or time.time())
+        if rec.status == "held" and time.time() - rec.held_since > held_timeout:
+            _remove_held(schedd, rec)
 
     # Jobs not in the live queue are in history (completed) or vanished (removed).
     for k in (k for k in open_keys if k not in seen_live):

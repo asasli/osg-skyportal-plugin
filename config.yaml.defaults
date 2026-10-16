@@ -94,6 +94,8 @@ services:
                 poller:
                     # Seconds between condor_q sweeps. Bursty workloads → drop to 10-30.
                     interval_seconds: 60
+                    # A job held longer than this is removed and reported as failed.
+                    held_timeout_seconds: 900
                 batch:
                     # Coalesce incoming submits into one itemdata RPC (one cluster,
                     # many procs) to lift the AP submit-rate ceiling ~10x. The
