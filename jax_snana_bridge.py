@@ -156,12 +156,17 @@ def _posterior_samples(res, vals: dict, n_samples: int = 2000) -> dict | None:
     SkyPortal's corner plot, like the fiesta/redback bridges."""
     import numpy as np
 
-    names = list(getattr(res, "cov_output_params", []) or [])
+    # param_covariances is square over every fitted parameter (res.params order,
+    # e.g. PKMJD/x1/c/x0); cov_output_params is the reportable subset (no PKMJD),
+    # so slice that subset's rows/cols out of the full matrix by position.
+    full = list(res.params.keys())
+    names = [p for p in (getattr(res, "cov_output_params", []) or []) if p in full]
     if not names:
         return None
     try:
+        idx = [full.index(p) for p in names]
         mean = np.array([float(np.asarray(res.params[p])[0]) for p in names])
-        cov = np.asarray(res.param_covariances[0], dtype=float)
+        cov = np.asarray(res.param_covariances[0], dtype=float)[np.ix_(idx, idx)]
     except Exception:  # noqa: BLE001 — posterior is best-effort
         return None
     if cov.shape != (len(names), len(names)) or not (

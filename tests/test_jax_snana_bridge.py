@@ -48,10 +48,23 @@ def test_posterior_samples_from_covariance():
     np = pytest.importorskip("numpy")
 
     class _Res:
+        # 4 fitted params (PKMJD first), but only 3 reportable -> 4x4 cov, 3 names.
         cov_output_params = ["x1", "c", "x0"]
-        params = {"x1": np.array([-0.8]), "c": np.array([0.06]), "x0": np.array([0.0305])}
+        params = {
+            "PKMJD": np.array([59113.0]),
+            "x1": np.array([-0.8]),
+            "c": np.array([0.06]),
+            "x0": np.array([0.0305]),
+        }
         param_covariances = np.array(
-            [[[2.0e-3, 1e-4, -5e-6], [1e-4, 1.4e-4, -2e-6], [-5e-6, -2e-6, 1.3e-7]]]
+            [
+                [
+                    [1.3e-7, 2e-7, -3e-6, -3e-6],
+                    [2e-7, 2.0e-3, 1e-4, -5e-6],
+                    [-3e-6, 1e-4, 1.4e-4, -2e-6],
+                    [-3e-6, -5e-6, -2e-6, 1.3e-7],
+                ]
+            ]
         )
 
     out = jb._posterior_samples(_Res(), {"x0": 0.0305, "mB": 14.425}, n_samples=400)
@@ -63,5 +76,6 @@ def test_posterior_samples_from_covariance():
 def test_posterior_samples_none_without_covariance():
     class _Res:
         cov_output_params = []
+        params = {}
 
     assert jb._posterior_samples(_Res(), {}) is None
