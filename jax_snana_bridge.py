@@ -146,6 +146,57 @@ def _model_lightcurve(fitter, result, bands: dict, t0: float, redshift: float) -
     return out
 
 
+def _posterior_samples(res, vals: dict, n_samples: int = 2000) -> dict | None:
+    """Draw a Gaussian posterior from the fit's parameter covariance.
+
+    A SALT fit is a least-squares, so its posterior is the multivariate normal
+    at the best-fit mean with the fit covariance (jax-snana's param_covariances
+    over cov_output_params). x0 is reported as mB via the exact transform the fit
+    uses, matching the headline parameters. Shape {param: [samples]} drives
+    SkyPortal's corner plot, like the fiesta/redback bridges."""
+    import numpy as np
+
+    names = list(getattr(res, "cov_output_params", []) or [])
+    if not names:
+        return None
+    try:
+        mean = np.array([float(np.asarray(res.params[p])[0]) for p in names])
+        cov = np.asarray(res.param_covariances[0], dtype=float)
+    except Exception:  # noqa: BLE001 — posterior is best-effort
+        return None
+    if cov.shape != (len(names), len(names)) or not (
+        np.all(np.isfinite(cov)) and np.all(np.isfinite(mean))
+    ):
+        return None
+    cov = 0.5 * (cov + cov.T)  # symmetrize; a least-squares cov can drift off-symmetric numerically
+    rng = np.random.default_rng(0)
+    try:
+        draws = rng.multivariate_normal(mean, cov, size=n_samples)
+    except Exception:  # noqa: BLE001 — fall back to marginals if cov isn't usable
+        diag = np.clip(np.diag(cov), 0.0, None)
+        draws = rng.normal(mean, np.sqrt(diag), size=(n_samples, len(names)))
+    col = {name: draws[:, i] for i, name in enumerate(names)}
+
+    out: dict[str, list] = {}
+    for p in ("x1", "c"):
+        if p in col:
+            out[p] = [float(x) for x in col[p]]
+    # x0 -> mB with the offset fixed by the best fit (mB = -2.5 log10 x0 + const).
+    x0b, mBb = vals.get("x0"), vals.get("mB")
+    if "x0" in col and x0b and x0b > 0 and mBb is not None:
+        const = mBb + 2.5 * math.log10(x0b)
+        x0d = col["x0"]
+        pos = x0d > 0
+        if pos.any():
+            mB = -2.5 * np.log10(np.where(pos, x0d, 1.0)) + const
+            out["mB"] = [float(m) for m, ok in zip(mB, pos) if ok]
+            # keep x1/c aligned to the samples that yielded a finite mB
+            for p in ("x1", "c"):
+                if p in col:
+                    out[p] = [float(v) for v, ok in zip(col[p], pos) if ok]
+    return out or None
+
+
 def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir: str = ".") -> dict:
     """Fit the source's light curve with a jax-snana model. Returns the
     fiesta-style {status, message, source, results, model_lightcurve, n_detections}."""
@@ -222,4 +273,10 @@ def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir:
         out["model_lightcurve"] = _model_lightcurve(fitter, res, present, t0, z)
     except Exception as e:  # noqa: BLE001 — overlay data is best-effort
         out["model_lightcurve_error"] = repr(e)
+    try:
+        samples = _posterior_samples(res, vals)
+        if samples:
+            out["posterior_samples"] = samples
+    except Exception as e:  # noqa: BLE001 — posterior is best-effort
+        out["posterior_samples_error"] = repr(e)
     return out

@@ -2,6 +2,8 @@
 imported lazily inside run_from_skyportal_inputs). The end-to-end SALT fit is
 validated against the real package separately."""
 
+import pytest
+
 import jax_snana_bridge as jb
 
 
@@ -39,3 +41,27 @@ def test_resolve_redshift_param_wins_then_csv():
     assert jb._resolve_redshift({"analysis_parameters": {"redshift": 0.1}}) == 0.1
     assert jb._resolve_redshift({"redshift": "redshift\n0.2\n"}) == 0.2
     assert jb._resolve_redshift({}) is None
+
+
+def test_posterior_samples_from_covariance():
+    """MVN draws centre on the best fit; x0 is surfaced as mB."""
+    np = pytest.importorskip("numpy")
+
+    class _Res:
+        cov_output_params = ["x1", "c", "x0"]
+        params = {"x1": np.array([-0.8]), "c": np.array([0.06]), "x0": np.array([0.0305])}
+        param_covariances = np.array(
+            [[[2.0e-3, 1e-4, -5e-6], [1e-4, 1.4e-4, -2e-6], [-5e-6, -2e-6, 1.3e-7]]]
+        )
+
+    out = jb._posterior_samples(_Res(), {"x0": 0.0305, "mB": 14.425}, n_samples=400)
+    assert set(out) == {"x1", "c", "mB"}
+    assert abs(sum(out["x1"]) / len(out["x1"]) + 0.8) < 0.05
+    assert abs(sum(out["mB"]) / len(out["mB"]) - 14.425) < 0.05
+
+
+def test_posterior_samples_none_without_covariance():
+    class _Res:
+        cov_output_params = []
+
+    assert jb._posterior_samples(_Res(), {}) is None

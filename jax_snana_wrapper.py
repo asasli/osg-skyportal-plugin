@@ -52,6 +52,8 @@ def bundle_for_skyportal(result: dict) -> dict:
         analysis["model_name"] = result["source"]  # label the overlay by the fitted model
     if result.get("model_lightcurve"):
         analysis["model_lightcurve"] = result["model_lightcurve"]
+    if result.get("posterior_samples"):
+        analysis["posterior_samples"] = result["posterior_samples"]  # SkyPortal corner plot
     if result.get("n_detections") is not None:
         analysis["n_detections"] = result["n_detections"]
     return {
