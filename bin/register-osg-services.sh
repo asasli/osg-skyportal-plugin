@@ -63,7 +63,7 @@ python register_analysis_service.py \
   --name JAX_SNANA_OSG --display "jax-snana (OSG)" \
   --listener-url http://localhost:7100/analysis/jax_snana_osg \
   --input-data-types photometry redshift \
-  --optional-params-json '{"source": ["SALT3.DOVEKIE", "SALT3.K21", "BAYESN.G26", "BAYESN.W22"], "wrapper": ["jax_snana"], "singularity_image": ["osdf:///ospool/ap41/data/michael.coughlin/jax-snana-v1.sif"], "mwebv": {"type": "number"}, "n_fit_iterations": {"type": "number", "default": 3}, "request_cpus": {"type": "number", "default": 1}, "request_memory": {"type": "number", "default": 2048}}'
+  --optional-params-json '{"source": ["SALT3.DOVEKIE", "SALT3.K21", "BAYESN.G26", "BAYESN.W22"], "wrapper": ["jax_snana"], "singularity_image": ["/cvmfs/singularity.opensciencegrid.org/mattgrayling/jax-snana:latest", "docker://ghcr.io/mattgrayling/jax-snana"], "mwebv": {"type": "number"}, "n_fit_iterations": {"type": "number", "default": 3}, "request_cpus": {"type": "number", "default": 1}, "request_memory": {"type": "number", "default": 2048}}'
 
 # Already registered (kept here for reference / re-registration):
 #   Fiesta_OSG      -> backend fiesta, /analysis/fiesta_osg
