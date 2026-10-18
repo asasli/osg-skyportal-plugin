@@ -62,6 +62,9 @@ def bundle_for_skyportal(result: dict) -> dict:
         analysis["annotations"] = result["annotations"]
     if result.get("classifications"):
         analysis["classifications"] = result["classifications"]
+    # FLARE's forecast of the g and r light curve, in fiesta's per-filter overlay form
+    if result.get("model_lightcurve"):
+        analysis["model_lightcurve"] = result["model_lightcurve"]
     return {
         "status": "success",
         "message": result.get("message", "FLARE complete"),
