@@ -274,10 +274,11 @@ WRAPPER_DEFAULT_IMAGE = {
     # IGWN-token'd aframe job can't read) and no per-node docker convert. Synced
     # from docker://ghcr.io/ml4gw/buoy/buoy:main.
     "aframe": "/cvmfs/singularity.opensciencegrid.org/ml4gw/buoy/buoy:main",
-    # FLARE runtime (containers/flare.def): the package ships its own models.
-    # Versioned filename (never overwrite): OSDF caches key on the object, so
-    # reusing a name after rebuilding serves a stale copy (md5 mismatch -> held).
-    "flare": "osdf:///ospool/ap41/data/michael.coughlin/flare-v3.sif",
+    # FLARE runtime: CVMFS mirror (token-free, no per-node OSDF pull) of
+    # ghcr.io/applecider-ml/flare:latest, synced via cvmfs-singularity-sync; the
+    # :latest tag re-syncs on every build, so a new FLARE image is picked up with
+    # no plugin change. docker://ghcr.io/applecider-ml/flare:latest is the fallback.
+    "flare": "/cvmfs/singularity.opensciencegrid.org/applecider-ml/flare:latest",
     # ORACLE runtime: the maintainer's image ships the oracle package + weights.
     "oracle": "/cvmfs/singularity.opensciencegrid.org/dev-ved30/oracle:main",
     # FLEET runtime: bakes the RF pickles + SFD maps. CVMFS mirror (token-free, no
