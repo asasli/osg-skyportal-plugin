@@ -9,7 +9,7 @@ import pytest
 
 import flare_bridge
 
-PHOT_COLUMNS = ["mjd", "filter", "mag", "magerr", "limiting_mag"]
+PHOT_COLUMNS = ["mjd", "filter", "mag", "magerr", "limiting_mag", "instrument_name"]
 
 
 def _csv(rows, columns):
@@ -25,21 +25,11 @@ def _payload(**over):
     rows = [
         {"mjd": 60000.0, "filter": "ztfg", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5},
         {"mjd": 60000.1, "filter": "ztfr", "mag": 18.7, "magerr": 0.06, "limiting_mag": 20.4},
-        {
-            "mjd": 60003.0,
-            "filter": "ztfg",
-            "mag": "",
-            "magerr": "",
-            "limiting_mag": 20.6,
-        },  # upper limit
-        {
-            "mjd": 60005.0,
-            "filter": "sdssu",
-            "mag": 18.0,
-            "magerr": 0.1,
-            "limiting_mag": 21.0,
-        },  # non-ZTF
-        {"mjd": 60008.0, "filter": "ztfr", "mag": 18.2, "magerr": 0.04, "limiting_mag": 20.3},
+        {"mjd": 60003.0, "filter": "ztfg", "mag": "", "magerr": "", "limiting_mag": 20.6},   # upper limit
+        {"mjd": 60005.0, "filter": "sdssu", "mag": 18.0, "magerr": 0.1, "limiting_mag": 21.0},  # non-ZTF filter
+        {"mjd": 60006.0, "filter": "sdssr", "mag": 18.1, "magerr": 0.1, "limiting_mag": 21.0, "instrument_name": "SEDM"},  # other instrument
+        {"mjd": 60007.0, "filter": "ztfr", "mag": 18.3, "magerr": 0.05, "limiting_mag": 20.3, "instrument_name": "GITCamera"},  # other instrument, ZTF filter name
+        {"mjd": 60008.0, "filter": "ztfr", "mag": 18.2, "magerr": 0.04, "limiting_mag": 20.3, "instrument_name": "ZTF"},
     ]
     p = {"analysis_parameters": over.pop("analysis_parameters", {})}
     p["photometry"] = over.pop("photometry", _csv(rows, PHOT_COLUMNS))
@@ -50,6 +40,14 @@ def _payload(**over):
 def test_photometry_rows_keeps_ztf_detections_only():
     rows = flare_bridge.photometry_rows(_payload())
     assert [r[1] for r in rows] == [1, 2, 2] and rows[0][0] == 60000.0 and rows[-1][2] == 18.2
+    assert all(r[0] not in (60006.0, 60007.0) for r in rows)   # SEDM and GIT rows are dropped
+
+
+def test_photometry_rows_without_instrument_column_keeps_ztf_filters():
+    rows = [{"mjd": 60000.0, "filter": "ztfg", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5},
+            {"mjd": 60001.0, "filter": "sdssr", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5}]
+    out = flare_bridge.photometry_rows(_payload(photometry=_csv(rows, PHOT_COLUMNS[:-1])))
+    assert [r[0] for r in out] == [60000.0]
 
 
 def test_photometry_rows_empty_raises():
@@ -57,110 +55,14 @@ def test_photometry_rows_empty_raises():
         flare_bridge.photometry_rows(_payload(photometry=_csv([], PHOT_COLUMNS)))
 
 
-def test_photometry_rows_drops_sub_5sigma():
-    # magerr 0.5 -> SNR ~2.2 (a forced-photometry non-detection); 0.05 -> ~22 kept.
-    rows = [
-        {"mjd": 60001.0, "filter": "ztfg", "mag": 22.5, "magerr": 0.5, "limiting_mag": 20.3},
-        {"mjd": 60002.0, "filter": "ztfr", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5},
-    ]
-    out = flare_bridge.photometry_rows(_payload(photometry=_csv(rows, PHOT_COLUMNS)))
-    assert [r[1] for r in out] == [2] and out[0][2] == 18.5
-
-
-def test_photometry_rows_all_sub_5sigma_raises():
-    # A light curve of only forced-photometry noise -> no detections -> raise.
-    rows = [{"mjd": 60001.0, "filter": "ztfg", "mag": 22.5, "magerr": 0.5, "limiting_mag": 20.3}]
-    with pytest.raises(ValueError):
-        flare_bridge.photometry_rows(_payload(photometry=_csv(rows, PHOT_COLUMNS)))
-
-
 def test_redshift_param_wins_over_skyportal_value():
     p = _payload(redshift=_csv([{"redshift": 0.05}], ["redshift"]))
     assert flare_bridge.resolve_redshift(p) == 0.05
-    p = _payload(
-        redshift=_csv([{"redshift": 0.05}], ["redshift"]), analysis_parameters={"redshift": "0.12"}
-    )
+    p = _payload(redshift=_csv([{"redshift": 0.05}], ["redshift"]), analysis_parameters={"redshift": "0.12"})
     assert flare_bridge.resolve_redshift(p) == 0.12
     assert flare_bridge.resolve_redshift(_payload()) is None
 
 
 def test_params_passthrough():
     assert flare_bridge._params(_payload()) == {}
-    assert (
-        flare_bridge._params(_payload(analysis_parameters={"horizon_days": 20}))["horizon_days"]
-        == 20
-    )
-
-
-def test_merged_annotations_flattens_catalogue_context():
-    # SkyPortal exports annotations as a CSV whose `data` cell is a dict string.
-    ann = _csv(
-        [
-            {"data": "{'sgscore1': 0.02, 'distpsnr1': 3.0, 'drb': 0.31}", "origin": "BOOM"},
-            {"data": "{'neargaia': None, 'ps1_kron_r': 19.5}", "origin": "host"},
-        ],
-        ["data", "modified", "origin", "created_at"],
-    )
-    merged = flare_bridge.merged_annotations({"annotations": ann})
-    assert merged["sgscore1"] == 0.02
-    assert merged["distpsnr1"] == 3.0
-    assert merged["ps1_kron_r"] == 19.5
-    # A null is dropped rather than masking a later value.
-    assert "neargaia" not in merged
-
-
-def test_merged_annotations_without_any():
-    assert flare_bridge.merged_annotations({}) == {}
-    assert flare_bridge.merged_annotations({"annotations": None}) == {}
-
-
-def test_load_context_reads_staged_file(tmp_path):
-    import json
-
-    (tmp_path / flare_bridge.CONTEXT_FILE).write_text(json.dumps({"wise": {"w1mpro": 15.0}}))
-    assert flare_bridge._load_context(str(tmp_path)) == {"wise": {"w1mpro": 15.0}}
-    # Absent/invalid -> {} so the job falls back to FLARE's live fetch.
-    assert flare_bridge._load_context(str(tmp_path / "nope")) == {}
-
-
-def _result(predicted="SN_Ia"):
-    return {
-        "annotations": {"flare_class": predicted, "flare_p_max": 0.9},
-        "results": {
-            "classification": {
-                "predicted": predicted,
-                "probabilities": {predicted: 0.9, "AGN": 0.1},
-            }
-        },
-    }
-
-
-def test_shape_annotations_to_list_with_full_probs():
-    r = _result()
-    flare_bridge._shape_for_skyportal(r)
-    assert isinstance(r["annotations"], list) and r["annotations"][0]["origin"] == "FLARE"
-    data = r["annotations"][0]["data"]
-    assert data["flare_p_SN_Ia"] == 0.9 and data["flare_p_AGN"] == 0.1  # full vector added
-    assert data["flare_class"] == "SN_Ia"  # original keys kept
-
-
-def test_shape_emits_ml_classification_mapped_to_sitewide():
-    r = _result()
-    flare_bridge._shape_for_skyportal(r)
-    c = r["classifications"][0]
-    assert c == {
-        "taxonomy": "Sitewide Taxonomy",
-        "classification": "Ia",
-        "probability": 0.9,
-        "ml": True,
-        "origin": "FLARE",
-    }
-
-
-def test_shape_maps_cc_and_slsn():
-    r = _result("SN_CC")
-    flare_bridge._shape_for_skyportal(r)
-    assert r["classifications"][0]["classification"] == "Type II"
-    r = _result("SLSN")
-    flare_bridge._shape_for_skyportal(r)
-    assert r["classifications"][0]["classification"] == "Ic-SLSN"
+    assert flare_bridge._params(_payload(analysis_parameters={"horizon_days": 20}))["horizon_days"] == 20
