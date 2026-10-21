@@ -26,18 +26,17 @@ csv.field_size_limit(10**9)
 # offline when present. Absent -> FLARE fetches it live, as before.
 CONTEXT_FILE = "flare_context.json"
 
-# SkyPortal filter names -> ZTF fid (g=1, r=2, i=3), the order flare.fetch.to_events expects.
+# ZTF filter names -> fid (g=1, r=2, i=3), the order flare.fetch.to_events expects. Only ZTF
+# photometry is passed: FLARE is trained on ZTF detections, and the photometry that other
+# instruments post on the same source (SEDM, GIT, ... in SDSS filters) sits on different zero
+# points and depths. Passing it changed the verdict for ZTF26abzxgsr from a 1% anomaly alarm
+# to an ordinary CV (2026-10-20).
 FILTERS = {
     "ztfg": 1,
     "ztfr": 2,
     "ztfi": 3,
-    "g": 1,
-    "r": 2,
-    "i": 3,
-    "sdssg": 1,
-    "sdssr": 2,
-    "sdssi": 3,
 }
+ZTF_INSTRUMENTS = {"ztf"}
 
 
 def _params(payload: dict) -> dict:
@@ -94,14 +93,18 @@ _MAX_MAGERR = 1.0857 / DETECTION_SNR
 
 
 def photometry_rows(payload: dict) -> list[tuple]:
-    """5-sigma detections only, as (mjd, fid, mag, magerr); upper limits, non-ZTF
-    filters, and sub-5-sigma forced-photometry points are dropped. FLARE was
-    trained on detections."""
+    """ZTF 5-sigma detections only, as (mjd, fid, mag, magerr); upper limits, non-ZTF
+    filters, rows of other instruments (when the payload carries `instrument_name`),
+    and sub-5-sigma forced-photometry points are dropped. FLARE was trained on ZTF
+    detections."""
     rows = []
     for r in _read_csv(payload.get("photometry")):
         fid = FILTERS.get(str(r.get("filter", "")).strip().lower())
+        instrument = str(r.get("instrument_name") or "").strip().lower()
         mjd, mag, err = _to_float(r.get("mjd")), _to_float(r.get("mag")), _to_float(r.get("magerr"))
         if fid is None or mjd is None or mag is None or err is None or err <= 0:
+            continue
+        if instrument and instrument not in ZTF_INSTRUMENTS:
             continue
         if err > _MAX_MAGERR:  # SNR < 5
             continue

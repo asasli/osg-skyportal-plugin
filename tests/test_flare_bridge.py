@@ -9,7 +9,7 @@ import pytest
 
 import flare_bridge
 
-PHOT_COLUMNS = ["mjd", "filter", "mag", "magerr", "limiting_mag"]
+PHOT_COLUMNS = ["mjd", "filter", "mag", "magerr", "limiting_mag", "instrument_name"]
 
 
 def _csv(rows, columns):
@@ -38,8 +38,31 @@ def _payload(**over):
             "mag": 18.0,
             "magerr": 0.1,
             "limiting_mag": 21.0,
-        },  # non-ZTF
-        {"mjd": 60008.0, "filter": "ztfr", "mag": 18.2, "magerr": 0.04, "limiting_mag": 20.3},
+        },  # non-ZTF filter
+        {
+            "mjd": 60006.0,
+            "filter": "sdssr",
+            "mag": 18.1,
+            "magerr": 0.1,
+            "limiting_mag": 21.0,
+            "instrument_name": "SEDM",
+        },  # other instrument
+        {
+            "mjd": 60007.0,
+            "filter": "ztfr",
+            "mag": 18.3,
+            "magerr": 0.05,
+            "limiting_mag": 20.3,
+            "instrument_name": "GITCamera",
+        },  # other instrument with a ZTF filter name
+        {
+            "mjd": 60008.0,
+            "filter": "ztfr",
+            "mag": 18.2,
+            "magerr": 0.04,
+            "limiting_mag": 20.3,
+            "instrument_name": "ZTF",
+        },
     ]
     p = {"analysis_parameters": over.pop("analysis_parameters", {})}
     p["photometry"] = over.pop("photometry", _csv(rows, PHOT_COLUMNS))
@@ -50,6 +73,16 @@ def _payload(**over):
 def test_photometry_rows_keeps_ztf_detections_only():
     rows = flare_bridge.photometry_rows(_payload())
     assert [r[1] for r in rows] == [1, 2, 2] and rows[0][0] == 60000.0 and rows[-1][2] == 18.2
+    assert all(r[0] not in (60006.0, 60007.0) for r in rows)  # SEDM and GIT rows are dropped
+
+
+def test_photometry_rows_without_instrument_column_keeps_ztf_filters():
+    rows = [
+        {"mjd": 60000.0, "filter": "ztfg", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5},
+        {"mjd": 60001.0, "filter": "sdssr", "mag": 18.5, "magerr": 0.05, "limiting_mag": 20.5},
+    ]
+    out = flare_bridge.photometry_rows(_payload(photometry=_csv(rows, PHOT_COLUMNS[:-1])))
+    assert [r[0] for r in out] == [60000.0]
 
 
 def test_photometry_rows_empty_raises():
