@@ -126,6 +126,9 @@ _SUBMITTING: list[dict] = []
 
 _WAITING_DRAIN_S = 10.0
 
+_SUBMIT_RETRIES = 5
+_SUBMIT_RETRY_BASE_S = 120.0
+
 
 def check_caps(cfg: dict, analysis_name: str, resource_id: str | None) -> str | None:
     """Return None if the request fits within configured caps, else a reason string."""
@@ -180,8 +183,25 @@ def _commit_submit(schedd, sub, spool: bool) -> int:
             return sub.queue(txn, count=1)
     result = schedd.submit(sub, count=1, spool=spool)  # htcondor2
     if spool:
-        schedd.spool(result)  # push the input sandbox to the AP
+        _spool_or_remove(schedd, result)
     return result.cluster()
+
+
+def _spool_or_remove(schedd, result) -> None:
+    """Push the input sandbox to the AP. A job whose spool failed never starts,
+    so remove it rather than leave it for a later rehydrate to report."""
+    try:
+        schedd.spool(result)
+    except Exception:
+        try:
+            schedd.act(
+                _htcondor().JobAction.Remove,
+                f"ClusterId == {result.cluster()}",
+                reason="input spool failed",
+            )
+        except Exception as e:  # noqa: BLE001
+            log(f"could not remove unspooled cluster {result.cluster()}: {e!r}")
+        raise
 
 
 def get_schedd(cfg: dict, ap: dict | None = None):
@@ -309,9 +329,8 @@ WRAPPER_DEFAULT_RESOURCES = {
     "aframe": {"request_disk": 16384, "request_memory": 8192, "max_runtime_seconds": 7200},
     # Uses ~1.5 GB of scratch; slots that enforce the 1 GB default hold the job.
     "fleet": {"request_disk": 3072},
-    # redback-jax defaults to a GPU (hours on CPU) and peaks ~17 GB; an explicit
-    # request_gpus=0 / request_memory still wins.
-    "redback": {"request_gpus": 1, "request_memory": 24576},
+    # Hours on CPU.
+    "redback": {"request_gpus": 1, "request_memory": 8192},
 }
 
 # wrapper -> (entrypoint, extra bridge/helper basenames). The single runtime
@@ -900,7 +919,7 @@ def submit_jobs_batch(cfg: dict, items: list[dict]) -> list[tuple[int, int]]:
     result = schedd.submit(sub, itemdata=iter(itemdata), spool=needs_spool)
     cluster = int(result.cluster())
     if needs_spool:
-        schedd.spool(result)
+        _spool_or_remove(schedd, result)
 
     keys: list[tuple[int, int]] = []
     for proc, (aname, rid, cb, cbm, osdf_url, inp) in enumerate(meta):
@@ -941,9 +960,70 @@ def _post_failure_callbacks(items: list[dict], message: str) -> None:
             log(f"failure callback to {url} failed: {e!r}")
 
 
+def _retry_or_fail(items: list[dict], error: Exception) -> None:
+    """Put requests whose submit failed back in the waiting list for a later try,
+    and report the failure only once they are out of tries."""
+    exhausted = []
+    for it in items:
+        attempts = it.get("submit_attempts", 0) + 1
+        if attempts > _SUBMIT_RETRIES:
+            exhausted.append(it)
+            continue
+        it["submit_attempts"] = attempts
+        it["retry_at"] = time.time() + _SUBMIT_RETRY_BASE_S * 2 ** (attempts - 1)
+        _WAITING.append(it)
+    if exhausted:
+        _post_failure_callbacks(exhausted, str(error))
+
+
 def _wrapper_of(item: dict) -> str:
     params = (item.get("inputs") or {}).get("analysis_parameters") or {}
     return str(params.get("wrapper", "")).strip().lower()
+
+
+def _insufficient_data_reason(item: dict) -> str | None:
+    """The job's own input check, run before submitting so a request that can
+    only fail never takes an OSG slot. None when the inputs can't be read here."""
+    inputs = item["inputs"]
+    if not isinstance(inputs, dict):
+        return None
+    params = inputs.get("analysis_parameters") or {}
+    if str(params.get("dry_run", "")).strip().lower() in ("true", "1", "yes", "t"):
+        return None
+    wrapper = _wrapper_of(item)
+    try:
+        if wrapper == "fleet":
+            import fleet_bridge
+
+            return fleet_bridge.unclassifiable_reason(inputs)
+        if wrapper == "periodfind":
+            import periodfind_bridge
+
+            return periodfind_bridge.insufficient_data_reason(inputs)
+        if wrapper == "jax_snana":
+            import jax_snana_bridge
+
+            return jax_snana_bridge.insufficient_data_reason(inputs)
+        if wrapper in ("ngsf", "snid"):
+            spectra = inputs.get("spectra")
+            rows = spectra.strip().splitlines()[1:] if isinstance(spectra, str) else spectra
+            if not rows:
+                return "no spectra in payload; the analysis service needs input_data_type 'spectra'"
+            return None
+        if wrapper in ("", "redback", "mosfit"):
+            backend = wrapper or str(params.get("backend", "fiesta")).strip().lower()
+            if backend == "mosfit":
+                import mosfit_bridge as bridge
+            elif backend == "redback":
+                import redback_bridge as bridge
+            else:
+                import fiesta_bridge as bridge
+            n = bridge.count_detections(inputs)
+            if n < 2:
+                return f"Not enough detections to fit (need at least 2, have {n})."
+    except Exception as e:  # noqa: BLE001
+        log(f"input check skipped for {item.get('resource_id')}: {e!r}")
+    return None
 
 
 def _batchable(cfg: dict, wrapper: str) -> bool:
@@ -978,9 +1058,7 @@ def _submit_in_background(cfg: dict, item: dict) -> None:
         )
     except Exception as e:  # noqa: BLE001 -- nothing is awaiting this
         log(f"{_wrapper_of(item)} submit failed for {item.get('resource_id')}: {e!r}")
-        # The request already got "pending", so the callback is how
-        # it learns the submit never happened.
-        _post_failure_callbacks([item], str(e))
+        _retry_or_fail([item], e)
     finally:
         _forget_submitting([item])
 
@@ -1002,8 +1080,12 @@ def _dispatch(cfg: dict, item: dict) -> None:
 def _drain_waiting(cfg: dict) -> None:
     """Dispatch waiting requests, oldest first, while the caps allow."""
     blocked: deque = deque()
+    now = time.time()
     while _WAITING:
         item = _WAITING.popleft()
+        if item.get("retry_at", 0) > now:
+            blocked.append(item)
+            continue
         reason = check_caps(cfg, item["analysis_name"], item.get("resource_id"))
         if reason is None:
             _dispatch(cfg, item)
@@ -1052,9 +1134,7 @@ async def _flush_batch(cfg: dict, loop, batch: list[dict]) -> None:
             )
         except Exception as e:  # noqa: BLE001 — keep the loop alive; report via callback
             log(f"batch submit failed ({len(items)} jobs): {e!r}")
-            await loop.run_in_executor(
-                _SUBMIT_POOL, functools.partial(_post_failure_callbacks, items, str(e))
-            )
+            await loop.run_in_executor(_SUBMIT_POOL, functools.partial(_retry_or_fail, items, e))
         finally:
             _forget_submitting(items)
 
@@ -1622,14 +1702,11 @@ class AnalysisHandler(tornado.web.RequestHandler):
             "callback_method": data["callback_method"],
             "inputs": data["inputs"],
         }
-        if _wrapper_of(item) == "fleet":
-            import fleet_bridge
-
-            reason = fleet_bridge.unclassifiable_reason(data["inputs"])
-            if reason:
-                self.set_status(422)
-                self.write({"error": "insufficient_data", "reason": reason})
-                return
+        reason = _insufficient_data_reason(item)
+        if reason:
+            self.set_status(422)
+            self.write({"error": "insufficient_data", "reason": reason})
+            return
 
         cap_reason = check_caps(self.cfg, analysis_name, data.get("resource_id"))
         if cap_reason or _WAITING:
@@ -1679,10 +1756,10 @@ class AnalysisHandler(tornado.web.RequestHandler):
                     inputs=data["inputs"],
                 ),
             )
-        except Exception as e:  # noqa: BLE001 — surface schedd errors to caller
+        except Exception as e:  # noqa: BLE001
             log(f"submit error: {e!r}")
-            self.set_status(500)
-            self.write({"error": str(e)})
+            _retry_or_fail([item], e)
+            self.write({"status": "pending", "queued": True, "waiting": "submit retry"})
             return
 
         self.write({"status": "pending", "cluster_id": cluster_id})
