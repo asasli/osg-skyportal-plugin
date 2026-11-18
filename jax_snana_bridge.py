@@ -202,6 +202,17 @@ def _posterior_samples(res, vals: dict, n_samples: int = 2000) -> dict | None:
     return out or None
 
 
+def insufficient_data_reason(payload: dict) -> str | None:
+    """Why the fit cannot run on this payload, or None."""
+    n = len(lightcurve_arrays(payload)[0])
+    if n < 3:
+        return f"Not enough photometry to fit (have {n})."
+    z = _resolve_redshift(payload)
+    if z is None or z <= 0:
+        return "A positive redshift is required for the fit."
+    return None
+
+
 def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir: str = ".") -> dict:
     """Fit the source's light curve with a jax-snana model. Returns the
     fiesta-style {status, message, source, results, model_lightcurve, n_detections}."""
@@ -210,20 +221,11 @@ def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir:
 
     params = _params(payload)
     source = str(params["source"])
+    reason = insufficient_data_reason(payload)
+    if reason:
+        return {"status": "failure", "message": reason, "source": source}
     mjd, flux, ferr, band = lightcurve_arrays(payload)
-    if len(mjd) < 3:
-        return {
-            "status": "failure",
-            "message": f"Not enough photometry to fit (have {len(mjd)}).",
-            "source": source,
-        }
     z = _resolve_redshift(payload)
-    if z is None or z <= 0:
-        return {
-            "status": "failure",
-            "message": "A positive redshift is required for the fit.",
-            "source": source,
-        }
     mwebv = _to_float(params.get("mwebv")) or 0.0
 
     settings: dict[str, Any] = {}

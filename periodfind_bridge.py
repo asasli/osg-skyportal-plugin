@@ -150,14 +150,18 @@ def _finder(algorithm: str):
     return periodfind.ConditionalEntropy(n_phase=10, n_mag=10), "conditional_entropy"
 
 
+def insufficient_data_reason(payload: dict) -> str | None:
+    """Why no period search can run on this payload, or None."""
+    n = count_detections(payload)
+    return f"Need >=10 detections for a period; have {n}." if n < 10 else None
+
+
 def run_from_skyportal_inputs(inputs: dict, resource_id: str = "obj") -> dict:
     params = inputs.get("analysis_parameters") or {}
+    reason = insufficient_data_reason(inputs)
+    if reason:
+        return {"status": "failure", "message": reason}
     mjd, mag, err, band, pred = _parse_photometry(inputs)
-    if len(mjd) < 10:
-        return {
-            "status": "failure",
-            "message": f"Need >=10 detections for a period; have {len(mjd)}.",
-        }
 
     cc = str(params.get("color_correct", "true")).strip().lower() not in ("false", "0", "no")
     resid, detrend_method = _detrend(mag, band, pred, color_correct=cc)

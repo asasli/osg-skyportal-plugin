@@ -946,6 +946,51 @@ def _wrapper_of(item: dict) -> str:
     return str(params.get("wrapper", "")).strip().lower()
 
 
+def _insufficient_data_reason(item: dict) -> str | None:
+    """The job's own input check, run before submitting so a request that can
+    only fail never takes an OSG slot. None when the inputs can't be read here."""
+    inputs = item["inputs"]
+    if not isinstance(inputs, dict):
+        return None
+    params = inputs.get("analysis_parameters") or {}
+    if str(params.get("dry_run", "")).strip().lower() in ("true", "1", "yes", "t"):
+        return None
+    wrapper = _wrapper_of(item)
+    try:
+        if wrapper == "fleet":
+            import fleet_bridge
+
+            return fleet_bridge.unclassifiable_reason(inputs)
+        if wrapper == "periodfind":
+            import periodfind_bridge
+
+            return periodfind_bridge.insufficient_data_reason(inputs)
+        if wrapper == "jax_snana":
+            import jax_snana_bridge
+
+            return jax_snana_bridge.insufficient_data_reason(inputs)
+        if wrapper in ("ngsf", "snid"):
+            spectra = inputs.get("spectra")
+            rows = spectra.strip().splitlines()[1:] if isinstance(spectra, str) else spectra
+            if not rows:
+                return "no spectra in payload; the analysis service needs input_data_type 'spectra'"
+            return None
+        if wrapper in ("", "redback", "mosfit"):
+            backend = wrapper or str(params.get("backend", "fiesta")).strip().lower()
+            if backend == "mosfit":
+                import mosfit_bridge as bridge
+            elif backend == "redback":
+                import redback_bridge as bridge
+            else:
+                import fiesta_bridge as bridge
+            n = bridge.count_detections(inputs)
+            if n < 2:
+                return f"Not enough detections to fit (need at least 2, have {n})."
+    except Exception as e:  # noqa: BLE001
+        log(f"input check skipped for {item.get('resource_id')}: {e!r}")
+    return None
+
+
 def _batchable(cfg: dict, wrapper: str) -> bool:
     # GW searches submit to the IGWN AP (per-wrapper routing in submit_job),
     # so they take the direct path, not the shared-signature batch flush.
@@ -1622,14 +1667,11 @@ class AnalysisHandler(tornado.web.RequestHandler):
             "callback_method": data["callback_method"],
             "inputs": data["inputs"],
         }
-        if _wrapper_of(item) == "fleet":
-            import fleet_bridge
-
-            reason = fleet_bridge.unclassifiable_reason(data["inputs"])
-            if reason:
-                self.set_status(422)
-                self.write({"error": "insufficient_data", "reason": reason})
-                return
+        reason = _insufficient_data_reason(item)
+        if reason:
+            self.set_status(422)
+            self.write({"error": "insufficient_data", "reason": reason})
+            return
 
         cap_reason = check_caps(self.cfg, analysis_name, data.get("resource_id"))
         if cap_reason or _WAITING:
