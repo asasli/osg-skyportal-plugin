@@ -183,8 +183,25 @@ def _commit_submit(schedd, sub, spool: bool) -> int:
             return sub.queue(txn, count=1)
     result = schedd.submit(sub, count=1, spool=spool)  # htcondor2
     if spool:
-        schedd.spool(result)  # push the input sandbox to the AP
+        _spool_or_remove(schedd, result)
     return result.cluster()
+
+
+def _spool_or_remove(schedd, result) -> None:
+    """Push the input sandbox to the AP. A job whose spool failed never starts,
+    so remove it rather than leave it for a later rehydrate to report."""
+    try:
+        schedd.spool(result)
+    except Exception:
+        try:
+            schedd.act(
+                _htcondor().JobAction.Remove,
+                f"ClusterId == {result.cluster()}",
+                reason="input spool failed",
+            )
+        except Exception as e:  # noqa: BLE001
+            log(f"could not remove unspooled cluster {result.cluster()}: {e!r}")
+        raise
 
 
 def get_schedd(cfg: dict, ap: dict | None = None):
@@ -903,7 +920,7 @@ def submit_jobs_batch(cfg: dict, items: list[dict]) -> list[tuple[int, int]]:
     result = schedd.submit(sub, itemdata=iter(itemdata), spool=needs_spool)
     cluster = int(result.cluster())
     if needs_spool:
-        schedd.spool(result)
+        _spool_or_remove(schedd, result)
 
     keys: list[tuple[int, int]] = []
     for proc, (aname, rid, cb, cbm, osdf_url, inp) in enumerate(meta):
