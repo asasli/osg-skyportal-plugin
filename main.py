@@ -126,6 +126,9 @@ _SUBMITTING: list[dict] = []
 
 _WAITING_DRAIN_S = 10.0
 
+_SUBMIT_RETRIES = 5
+_SUBMIT_RETRY_BASE_S = 120.0
+
 
 def check_caps(cfg: dict, analysis_name: str, resource_id: str | None) -> str | None:
     """Return None if the request fits within configured caps, else a reason string."""
@@ -941,6 +944,22 @@ def _post_failure_callbacks(items: list[dict], message: str) -> None:
             log(f"failure callback to {url} failed: {e!r}")
 
 
+def _retry_or_fail(items: list[dict], error: Exception) -> None:
+    """Put requests whose submit failed back in the waiting list for a later try,
+    and report the failure only once they are out of tries."""
+    exhausted = []
+    for it in items:
+        attempts = it.get("submit_attempts", 0) + 1
+        if attempts > _SUBMIT_RETRIES:
+            exhausted.append(it)
+            continue
+        it["submit_attempts"] = attempts
+        it["retry_at"] = time.time() + _SUBMIT_RETRY_BASE_S * 2 ** (attempts - 1)
+        _WAITING.append(it)
+    if exhausted:
+        _post_failure_callbacks(exhausted, str(error))
+
+
 def _wrapper_of(item: dict) -> str:
     params = (item.get("inputs") or {}).get("analysis_parameters") or {}
     return str(params.get("wrapper", "")).strip().lower()
@@ -1023,9 +1042,7 @@ def _submit_in_background(cfg: dict, item: dict) -> None:
         )
     except Exception as e:  # noqa: BLE001 -- nothing is awaiting this
         log(f"{_wrapper_of(item)} submit failed for {item.get('resource_id')}: {e!r}")
-        # The request already got "pending", so the callback is how
-        # it learns the submit never happened.
-        _post_failure_callbacks([item], str(e))
+        _retry_or_fail([item], e)
     finally:
         _forget_submitting([item])
 
@@ -1047,8 +1064,12 @@ def _dispatch(cfg: dict, item: dict) -> None:
 def _drain_waiting(cfg: dict) -> None:
     """Dispatch waiting requests, oldest first, while the caps allow."""
     blocked: deque = deque()
+    now = time.time()
     while _WAITING:
         item = _WAITING.popleft()
+        if item.get("retry_at", 0) > now:
+            blocked.append(item)
+            continue
         reason = check_caps(cfg, item["analysis_name"], item.get("resource_id"))
         if reason is None:
             _dispatch(cfg, item)
@@ -1097,9 +1118,7 @@ async def _flush_batch(cfg: dict, loop, batch: list[dict]) -> None:
             )
         except Exception as e:  # noqa: BLE001 — keep the loop alive; report via callback
             log(f"batch submit failed ({len(items)} jobs): {e!r}")
-            await loop.run_in_executor(
-                _SUBMIT_POOL, functools.partial(_post_failure_callbacks, items, str(e))
-            )
+            await loop.run_in_executor(_SUBMIT_POOL, functools.partial(_retry_or_fail, items, e))
         finally:
             _forget_submitting(items)
 
@@ -1721,10 +1740,10 @@ class AnalysisHandler(tornado.web.RequestHandler):
                     inputs=data["inputs"],
                 ),
             )
-        except Exception as e:  # noqa: BLE001 — surface schedd errors to caller
+        except Exception as e:  # noqa: BLE001
             log(f"submit error: {e!r}")
-            self.set_status(500)
-            self.write({"error": str(e)})
+            _retry_or_fail([item], e)
+            self.write({"status": "pending", "queued": True, "waiting": "submit retry"})
             return
 
         self.write({"status": "pending", "cluster_id": cluster_id})
