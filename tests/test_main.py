@@ -270,7 +270,7 @@ def test_redback_named_wrapper_defaults_to_gpu_image_and_slot(plugin_cfg, last_s
         inputs={"analysis_parameters": {"wrapper": "redback", "backend": "redback"}},
     )
     assert last_submit_desc["request_gpus"] == "1"
-    assert last_submit_desc["request_memory"] == "24576MB"
+    assert last_submit_desc["request_memory"] == "8192MB"
     assert (
         last_submit_desc["+SingularityImage"]
         == '"/cvmfs/singularity.opensciencegrid.org/nsarinastro/redback-jax:gpu"'

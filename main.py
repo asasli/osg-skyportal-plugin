@@ -329,9 +329,8 @@ WRAPPER_DEFAULT_RESOURCES = {
     "aframe": {"request_disk": 16384, "request_memory": 8192, "max_runtime_seconds": 7200},
     # Uses ~1.5 GB of scratch; slots that enforce the 1 GB default hold the job.
     "fleet": {"request_disk": 3072},
-    # redback-jax defaults to a GPU (hours on CPU) and peaks ~17 GB; an explicit
-    # request_gpus=0 / request_memory still wins.
-    "redback": {"request_gpus": 1, "request_memory": 24576},
+    # Hours on CPU.
+    "redback": {"request_gpus": 1, "request_memory": 8192},
 }
 
 # wrapper -> (entrypoint, extra bridge/helper basenames). The single runtime
