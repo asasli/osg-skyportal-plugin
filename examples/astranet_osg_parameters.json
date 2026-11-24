@@ -1,6 +1,6 @@
 {
   "wrapper": ["astranet"],
-  "singularity_image": ["osdf:///ospool/ap41/data/michael.coughlin/astranet-v1.sif"],
+  "singularity_image": ["/cvmfs/singularity.opensciencegrid.org/applecider-ml/astranet:latest"],
   "spectrum_index": {
     "type": "number",
     "title": "Spectrum row",
