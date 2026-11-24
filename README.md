@@ -98,6 +98,24 @@ uv run python register_analysis_service.py \
     --group-ids 1
 ```
 
+### ASTRANet spectroscopic classification and novelty
+
+Runs [ASTRANet](https://github.com/applecider-ml/astranet) on every spectrum of the
+source: a twelve-member ensemble over seven classes (Ia, Ibc, SLSN, II, AGN, CV, TDE),
+with the source redshift when SkyPortal has one, and an object-level novelty stage
+that returns a p-value and alarms at 1, 5, 10 and 15%. The result carries a
+classification, annotations (`astranet_class`, `astranet_prob`, `astranet_novelty_p`,
+`astranet_novelty_alarm`) and a one-page PNG report. About 0.3 s per spectrum on CPU.
+
+```bash
+uv run python register_analysis_service.py \
+    --name ASTRANet_OSG --display "ASTRANet (OSG)" \
+    --listener-url http://<plugin-host>:7100/analysis/astranet_osg \
+    --input-data-types spectra redshift \
+    --optional-params-json "$(cat examples/astranet_osg_parameters.json)" \
+    --group-ids 1
+```
+
 ## How it works
 
 - Submits a wrapper job (e.g. `fiesta_wrapper.py` + `fiesta_bridge.py`) to the OSG AP.

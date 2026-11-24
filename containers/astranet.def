@@ -1,0 +1,30 @@
+# ASTRANet runtime .sif: the package, the twelve checkpoints and the novelty bundle.
+#   apptainer build --fakeroot --mksquashfs-args "-processors 1" --build-arg WEIGHTS_URL=<checkpoints tar.gz> --build-arg NOVELTY_URL=<novelty.joblib> astranet.sif astranet.def
+Bootstrap: docker
+From: python:3.12-slim
+
+%arguments
+    WEIGHTS_URL=
+    NOVELTY_URL=
+
+%post
+    set -e
+    # a fakeroot build can see the builder's home: keep pip and python away from its user packages
+    export PYTHONNOUSERSITE=1 PIP_BREAK_SYSTEM_PACKAGES=1 DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends git curl && apt-get clean && rm -rf /var/lib/apt/lists/*
+    pip3 install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+    # scikit-learn is pinned to the version that wrote the novelty bundle
+    pip3 install --no-cache-dir "astranet[novelty] @ git+https://github.com/applecider-ml/astranet" "scikit-learn==1.8.0" matplotlib requests
+    mkdir -p /opt/astranet && cd /opt/astranet
+    curl -fsSL "{{ WEIGHTS_URL }}" | tar xz -C /opt/astranet
+    curl -fsSL "{{ NOVELTY_URL }}" -o /opt/astranet/models/novelty.joblib
+    # Fail the build if the ensemble or the novelty stage would not load.
+    python3 -c "from astranet.predict import Ensemble; from astranet.novelty import Novelty; Ensemble.from_dir('/opt/astranet/models', device='cpu'); Novelty.load('/opt/astranet/models/novelty.joblib'); print('astranet ok')"
+
+%environment
+    export ASTRANET_MODELS=/opt/astranet/models
+    # ignore packages of a bound home directory
+    export PYTHONNOUSERSITE=1
+
+%runscript
+    exec python3 "$@"
