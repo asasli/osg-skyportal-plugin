@@ -302,6 +302,9 @@ WRAPPER_DEFAULT_IMAGE = {
     # :latest tag re-syncs on every build, so a new FLARE image is picked up with
     # no plugin change. docker://ghcr.io/applecider-ml/flare:latest is the fallback.
     "flare": "/cvmfs/singularity.opensciencegrid.org/applecider-ml/flare:latest",
+    # ASTRANet runtime (package, twelve checkpoints, novelty bundle): CVMFS mirror of
+    # ghcr.io/applecider-ml/astranet:latest, synced via cvmfs-singularity-sync.
+    "astranet": "/cvmfs/singularity.opensciencegrid.org/applecider-ml/astranet:latest",
     # ORACLE runtime: the maintainer's image ships the oracle package + weights.
     "oracle": "/cvmfs/singularity.opensciencegrid.org/dev-ved30/oracle:main",
     # FLEET runtime: bakes the RF pickles + SFD maps. CVMFS mirror (token-free, no
@@ -349,6 +352,7 @@ WRAPPER_FILES = {
     "oracle": ("oracle_wrapper.py", ["oracle_bridge.py"]),
     "fleet": ("fleet_wrapper.py", ["fleet_bridge.py"]),
     "jax_snana": ("jax_snana_wrapper.py", ["jax_snana_bridge.py"]),
+    "astranet": ("astranet_wrapper.py", ["astranet_bridge.py"]),
     # redback-jax reuses the shared fiesta JAX wrapper (backend=redback picks the
     # bridge) but is its own named wrapper so it gets its own CVMFS image + GPU
     # resources; ships only the redback bridge (the redback-jax image has no fiesta).
@@ -413,6 +417,7 @@ def _stage_wrapper_job(
         "oracle",
         "fleet",
         "jax_snana",
+        "astranet",
         "redback",
     ) or params.get("use_wrapper", cfg.get("defaults", {}).get("use_wrapper", False))
     if not use_wrapper:
@@ -537,7 +542,7 @@ def _stage_wrapper_job(
     # Absent/empty => wrapper's per-job cache. The dir lands in the sandbox under
     # its basename; populate it out-of-band.
     jax_cache_dir = cfg.get("jax_cache_dir")
-    non_jax = ("periodfind", "mosfit", "pygrb", "ngsf", "snid", "alma", "aframe")
+    non_jax = ("periodfind", "mosfit", "pygrb", "ngsf", "snid", "alma", "aframe", "astranet")
     if wrapper not in non_jax and jax_cache_dir:
         cache_path = Path(jax_cache_dir).resolve()
         if cache_path.is_dir() and any(cache_path.iterdir()):
@@ -1679,6 +1684,8 @@ class AnalysisHandler(tornado.web.RequestHandler):
                     params.setdefault("wrapper", "ngsf")
                 elif "snid" in name:
                     params.setdefault("wrapper", "snid")
+                elif "astranet" in name:
+                    params.setdefault("wrapper", "astranet")
                 elif "flare" in name:
                     params.setdefault("wrapper", "flare")
                 elif "oracle" in name:

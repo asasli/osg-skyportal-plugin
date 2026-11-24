@@ -3,7 +3,7 @@ ASTRANet wrapper — runs inside the ASTRANet runtime image on an OSG worker.
 
 Contract (same as snid_wrapper / ngsf_wrapper):
 - Reads ``inputs.json`` from cwd (staged by HTCondor file transfer).
-- Runs the classification and the novelty stage via ``astranet_bridge`` (shipped alongside this file).
+- Runs the classification and the novelty stage via ``astranet_bridge`` (shipped per-job).
 - Bundles the result as SkyPortal's analysis-callback JSON
   ``{status, message, analysis: {results, plots, annotations}}``.
 - Optionally PUTs the bundle to ``$OSDF_OUTPUT_URL``; always writes it to stdout

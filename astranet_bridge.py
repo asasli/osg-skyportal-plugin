@@ -29,7 +29,7 @@ DEFAULTS = {
     # Use every spectrum of the source; a number selects one row, as in snid_bridge.
     "spectrum_index": None,
     "use_redshift": True,
-    # One-page PNG report (spectra, class probabilities, member votes, novelty) for the analysis page.
+    # One-page PNG report (spectra, class probabilities, member votes, novelty).
     "plot": True,
 }
 
@@ -112,7 +112,10 @@ def run_from_skyportal_inputs(payload: dict, resource_id: str = "obj", work_dir:
     from astranet.skyportal import analyze  # heavy import (torch); only in the image
 
     params = _params(payload)
-    # The image keeps its models here; set explicitly so the job works when the image environment is not applied.
-    if not params.get("models_dir") and not os.environ.get("ASTRANET_MODELS") and Path(IMAGE_MODELS).is_dir():
+    # Works when the image environment (ASTRANET_MODELS) is not applied on the worker.
+    env_models = os.environ.get("ASTRANET_MODELS")
+    if not params.get("models_dir") and not env_models and Path(IMAGE_MODELS).is_dir():
         params["models_dir"] = IMAGE_MODELS
-    return analyze(parse_spectra(payload), resolve_redshift(payload), params, resource_id, work_dir=work_dir)
+    return analyze(
+        parse_spectra(payload), resolve_redshift(payload), params, resource_id, work_dir=work_dir
+    )

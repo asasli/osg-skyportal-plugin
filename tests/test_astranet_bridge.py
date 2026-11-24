@@ -40,7 +40,8 @@ def _payload(n=2, **params):
 def test_all_spectra_parsed_with_nan_kept():
     spectra = ab.parse_spectra(_payload())
     assert len(spectra) == 2 and spectra[0]["instrument"] == "SEDM"
-    assert len(spectra[1]["wavelengths"]) == 5 and spectra[1]["fluxes"][2] != spectra[1]["fluxes"][2]
+    flux = spectra[1]["fluxes"]
+    assert len(spectra[1]["wavelengths"]) == 5 and flux[2] != flux[2]
 
 
 def test_spectrum_index_selects_one_row():
