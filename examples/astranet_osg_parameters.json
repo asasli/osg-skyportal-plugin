@@ -1,0 +1,19 @@
+{
+  "wrapper": ["astranet"],
+  "singularity_image": ["osdf:///ospool/ap41/data/michael.coughlin/astranet-v1.sif"],
+  "spectrum_index": {
+    "type": "number",
+    "title": "Spectrum row",
+    "description": "Leave blank to use every spectrum of the source (the novelty stage works per object). A number selects one row, -1 the last."
+  },
+  "use_redshift": {
+    "type": "boolean",
+    "title": "Use the source redshift",
+    "description": "With a redshift the network moves the spectrum to the rest frame itself and the novelty stage compares with objects of known redshift.",
+    "default": true
+  },
+  "redshift": {"type": "number", "title": "Redshift override"},
+  "novelty": ["", "off"],
+  "request_cpus": {"type": "number", "default": 2},
+  "request_memory": {"type": "number", "default": 6144}
+}
