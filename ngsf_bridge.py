@@ -167,10 +167,16 @@ def wav_range(payload: dict, row: dict) -> tuple[float, float]:
         return float(params["wav_min"]), float(params["wav_max"])
 
     instrument = str(params.get("instrument") or row.get("origin") or "").upper()
-    for name, rng in INSTRUMENT_WAV_RANGES.items():
-        if name in instrument:
-            return rng
-    return DEFAULT_WAV_RANGE
+    lo, hi = next(
+        (rng for name, rng in INSTRUMENT_WAV_RANGES.items() if name in instrument),
+        DEFAULT_WAV_RANGE,
+    )
+    lam = [w for w in _as_floats(row["wavelengths"]) if math.isfinite(w)]
+    if lam:
+        covered_lo, covered_hi = max(lo, min(lam)), min(hi, max(lam))
+        if covered_hi - covered_lo >= (hi - lo) / 2:
+            return covered_lo, covered_hi
+    return lo, hi
 
 
 def _prepare_tree(root: Path, payload: dict, lo: float, hi: float) -> Path:
